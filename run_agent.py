@@ -110,7 +110,7 @@ def main():
     parser.add_argument(
         "--max-turns",
         type=int,
-        default=50,
+        default=30,
         help="Maximum number of turns for the agent to take before stopping",
     )
     parser.add_argument(

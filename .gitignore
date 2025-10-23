@@ -2,5 +2,5 @@ results/
 logs/
 __pycache__/
 *.pyc
-
+.env
 

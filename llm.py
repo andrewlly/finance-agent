@@ -245,20 +245,31 @@ class GeneralLLM(LLM):
                     reasoning_effort="low",
                 )
 
+         # GPT-5 updated param case
+        def _token_kw(model_name: str, max_out: int):
+            needs_mct = model_name.startswith("gpt-5") or model_name.startswith("openai/gpt-5")
+            return {"max_completion_tokens": max_out} if needs_mct else {"max_tokens": max_out}
+
+        def _temp_kw(model_name: str, temp: float):
+            if model_name.startswith("gpt-5") or model_name.startswith("openai/gpt-5"):
+                return {}
+            return {"temperature": temp}
+
+        kwargs_common = {
+            "model": self.model_name,
+            "messages": messages,
+            **_temp_kw(self.model_name, self.temperature),
+            **_token_kw(self.model_name, self.max_tokens),
+        }
+
         if len(tools) > 0:
             return await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=self.temperature,
                 tools=tools,
-                max_tokens=self.max_tokens,
+                **kwargs_common,
             )
         else:
             return await self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=self.temperature,
-                max_tokens=self.max_tokens,
+                **kwargs_common,
             )
 
     def get_tool_calls(self, response: dict[str, any]) -> list[dict[str, any]]:
