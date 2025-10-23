@@ -27,6 +27,16 @@ MAX_MESSAGE_LENGTH = 1000
 LOGS_DIR = "logs"
 os.makedirs(LOGS_DIR, exist_ok=True)
 
+def setup_root_logger(level=logging.INFO):
+    """Optional: sets a default root logger for quick scripts"""
+    root = logging.getLogger()
+    if not root.hasHandlers():
+        root.setLevel(level)
+        ch = logging.StreamHandler()
+        ch.setLevel(level)
+        ch.setFormatter(ColorFormatter())
+        root.addHandler(ch)
+
 
 def color(color):
     colored_str = "".join((color, LEVEL, RESET))

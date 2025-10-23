@@ -1,6 +1,9 @@
 import argparse, csv, json, math, os, re, sys
 from collections import defaultdict
 from typing import Dict, Tuple, Any, Optional
+from logger import get_logger
+
+log = get_logger("judge")
 
 try:
     from openai import OpenAI
@@ -321,6 +324,8 @@ def main():
         ])
         w.writeheader()
         w.writerows(scored_rows)
+    acc = (correct_count / total) * 100 if total else 0.0
+    log.info(f"Total={total} Correct={correct_count} Accuracy={acc:.2f}%")
 
 if __name__ == "__main__":
     main()
