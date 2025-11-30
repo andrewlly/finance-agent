@@ -26,6 +26,20 @@ pip install -r requirements.txt
 
 We recommend creating and using a Conda environment for this. For detailed instructions on managing Conda environments, see the [official Conda documentation](https://docs.conda.io/projects/conda/en/stable/user-guide/tasks/manage-environments.html).
 
+## Running both green and white agents
+
+```bash
+
+# Start green agent
+python start_green_agent.py --mode white_agent --port 9001
+
+# Start white agent
+python start_white_agent.py --port 9002
+
+# Test both agents
+python test_white_agent_mode.py
+```
+
 ## Environment Setup
 
 Create a `.env` file with the necessary API keys:
@@ -118,35 +132,6 @@ The following models are supported by this repo:
 - openai/o4-mini-2025-04-16
 - openai/o3-2025-04-16
 ```
-
-## Web API Deployment
-
-You can deploy the agent as a REST API accessible via Cloudflare Tunnel:
-
-### Quick Start
-
-```bash
-# Install dependencies (includes FastAPI)
-pip install -r requirements.txt
-
-# Start green agent
-python start_green_agent.py --mode white_agent --port 9001
-
-# Start white agent
-python start_white_agent.py --port 9002
-
-# Test both agents
-python test_white_agent_mode.py
-```
-
-The API provides the following endpoints:
-
-- `POST /query` - Submit a query for async processing
-- `POST /query/sync` - Submit a query and wait for results
-- `GET /job/{job_id}` - Check job status
-- `GET /health` - Health check
-
-For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)
 
 ## Logs and Output
 
