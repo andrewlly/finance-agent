@@ -1,0 +1,5 @@
+# Finance Agent Card for A2A Protocol
+name = "Finance Research Agent"
+description = "AI agent specialized in financial research, company analysis, and SEC filings"
+agent_id = "finance-agent-001"
+version = "1.0.0"

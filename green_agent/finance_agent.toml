@@ -1,0 +1,32 @@
+name = "my_finance_green_agent"
+description = "The assessment hosting agent for finance tasks."
+version = "0.1.0"
+preferredTransport = "JSONRPC"
+protocolVersion = "0.3.0"
+
+defaultInputModes = ["text"]
+defaultOutputModes = ["text"]
+
+[capabilities]
+streaming = false
+
+[[skills]]
+id = "host_assess_finance"
+name = "Finance assessment hosting"
+description = """
+Assess the tool-calling ability of a finance agent.
+"""
+tags = ["green agent", "assessment hosting", "finance"]
+examples = ["""
+Your task is to test the finance agent located at:
+<white_agent_url>
+http://localhost:9002/
+</white_agent_url>
+You should use the following configuration:
+<config>
+{
+  "mode": "white_agent",
+  "max_iterations": 10
+}
+</config>
+    """]

@@ -119,6 +119,35 @@ The following models are supported by this repo:
 - openai/o3-2025-04-16
 ```
 
+## Web API Deployment
+
+You can deploy the agent as a REST API accessible via Cloudflare Tunnel:
+
+### Quick Start
+
+```bash
+# Install dependencies (includes FastAPI)
+pip install -r requirements.txt
+
+# Start green agent
+python start_green_agent.py --mode white_agent --port 9001
+
+# Start white agent
+python start_white_agent.py --port 9002
+
+# Test both agents
+python test_white_agent_mode.py
+```
+
+The API provides the following endpoints:
+
+- `POST /query` - Submit a query for async processing
+- `POST /query/sync` - Submit a query and wait for results
+- `GET /job/{job_id}` - Check job status
+- `GET /health` - Health check
+
+For detailed deployment instructions, see [DEPLOYMENT.md](DEPLOYMENT.md)
+
 ## Logs and Output
 
 The agent writes detailed logs to the `logs` directory, including:
