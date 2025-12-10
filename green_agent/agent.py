@@ -14,7 +14,7 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCard, Message, SendMessageSuccessResponse
+from a2a.types import AgentCard, AgentCapabilities, AgentSkill, Message, SendMessageSuccessResponse
 from a2a.utils import get_text_parts, new_agent_text_message
 from get_agent import get_agent
 from my_util import my_a2a, parse_tags
@@ -36,7 +36,29 @@ class FinanceAgentResult:
 def load_agent_card_toml(agent_name):
     current_dir = __file__.rsplit("/", 1)[0]
     with open(f"{current_dir}/{agent_name}.toml", "rb") as f:
-        return tomllib.load(f)
+        card_dict = tomllib.load(f)
+    
+    # Convert camelCase TOML fields to snake_case for AgentCard
+    # A2A TOML spec uses camelCase, but Python AgentCard uses snake_case
+    field_mapping = {
+        "defaultInputModes": "default_input_modes",
+        "defaultOutputModes": "default_output_modes",
+    }
+    
+    converted_dict = {}
+    for key, value in card_dict.items():
+        if key in field_mapping:
+            converted_dict[field_mapping[key]] = value
+        elif key == "capabilities" and isinstance(value, dict):
+            # Convert capabilities dict to AgentCapabilities object
+            converted_dict["capabilities"] = AgentCapabilities(**value)
+        elif key == "skills" and isinstance(value, list):
+            # Convert skills list of dicts to list of AgentSkill objects
+            converted_dict["skills"] = [AgentSkill(**skill) for skill in value]
+        else:
+            converted_dict[key] = value
+    
+    return converted_dict
 
 
 async def ask_white_agent_to_solve(
