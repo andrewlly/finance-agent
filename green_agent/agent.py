@@ -295,8 +295,9 @@ def start_finance_agent(
     
     # Use controller's public URL (Railway domain) for agent card
     # The controller proxies requests, so the agent card should advertise the controller URL
-    # Priority: AGENT_CARD_URL > CONTROLLER_URL > RAILWAY_PUBLIC_DOMAIN > hardcoded Railway URL > local fallback
+    # Priority: AGENT_CARD_URL > CLOUDRUN_HOST > CONTROLLER_URL > RAILWAY_PUBLIC_DOMAIN > hardcoded Railway URL > local fallback
     agent_card_url = os.environ.get("AGENT_CARD_URL")
+    cloudrun_host = os.environ.get("CLOUDRUN_HOST")
     controller_url = os.environ.get("CONTROLLER_URL")
     railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("RAILWAY_STATIC_URL")
     
@@ -304,6 +305,12 @@ def start_finance_agent(
         # Explicitly set agent card URL (highest priority)
         url = agent_card_url.rstrip('/')
         print(f"Using AGENT_CARD_URL: {url}")
+    elif cloudrun_host:
+        # Controller sets CLOUDRUN_HOST (from blog: CLOUDRUN_HOST="your-domain.com")
+        # Remove protocol if present, then add https
+        domain = cloudrun_host.replace('https://', '').replace('http://', '').split('/')[0]
+        url = f"https://{domain}"
+        print(f"Using CLOUDRUN_HOST: {url}")
     elif controller_url:
         # Controller explicitly sets its URL
         url = controller_url.rstrip('/')
@@ -324,6 +331,7 @@ def start_finance_agent(
         print(f"WARNING: Using fallback URL (Railway domain not found): {url}")
         print(f"  Available env vars: RAILWAY_PUBLIC_DOMAIN={os.environ.get('RAILWAY_PUBLIC_DOMAIN')}")
         print(f"  Available env vars: RAILWAY_STATIC_URL={os.environ.get('RAILWAY_STATIC_URL')}")
+        print(f"  Available env vars: CLOUDRUN_HOST={cloudrun_host}")
         print(f"  Available env vars: CONTROLLER_URL={controller_url}")
         print(f"  Available env vars: RAILWAY_ENVIRONMENT={os.environ.get('RAILWAY_ENVIRONMENT')}")
     
