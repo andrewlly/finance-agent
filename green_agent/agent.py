@@ -295,13 +295,18 @@ def start_finance_agent(
     
     # Use controller's public URL (Railway domain) for agent card
     # The controller proxies requests, so the agent card should advertise the controller URL
-    # Priority: CONTROLLER_URL > RAILWAY_PUBLIC_DOMAIN > RAILWAY_STATIC_URL > local fallback
-    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("RAILWAY_STATIC_URL")
+    # Priority: AGENT_CARD_URL > CONTROLLER_URL > RAILWAY_PUBLIC_DOMAIN > hardcoded Railway URL > local fallback
+    agent_card_url = os.environ.get("AGENT_CARD_URL")
     controller_url = os.environ.get("CONTROLLER_URL")
+    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("RAILWAY_STATIC_URL")
     
-    if controller_url:
+    if agent_card_url:
+        # Explicitly set agent card URL (highest priority)
+        url = agent_card_url.rstrip('/')
+        print(f"Using AGENT_CARD_URL: {url}")
+    elif controller_url:
         # Controller explicitly sets its URL
-        url = controller_url
+        url = controller_url.rstrip('/')
         print(f"Using CONTROLLER_URL: {url}")
     elif railway_domain:
         # Use Railway public domain (controller runs on the same domain)
@@ -309,14 +314,18 @@ def start_finance_agent(
         domain = railway_domain.split('/')[0] if '/' in railway_domain else railway_domain
         url = f"https://{domain}"
         print(f"Using Railway domain: {url}")
+    elif os.environ.get("RAILWAY_ENVIRONMENT"):
+        # We're on Railway but domain not set - use the known production URL
+        url = "https://finance-green-production.up.railway.app"
+        print(f"Using hardcoded Railway production URL: {url}")
     else:
         # Fallback: construct from host/port (for local development)
-        # Note: This should not happen in Railway deployment
         url = f"http://{host}:{port}"
         print(f"WARNING: Using fallback URL (Railway domain not found): {url}")
         print(f"  Available env vars: RAILWAY_PUBLIC_DOMAIN={os.environ.get('RAILWAY_PUBLIC_DOMAIN')}")
         print(f"  Available env vars: RAILWAY_STATIC_URL={os.environ.get('RAILWAY_STATIC_URL')}")
         print(f"  Available env vars: CONTROLLER_URL={controller_url}")
+        print(f"  Available env vars: RAILWAY_ENVIRONMENT={os.environ.get('RAILWAY_ENVIRONMENT')}")
     
     agent_card_dict["url"] = url  # complete all required card fields
 
