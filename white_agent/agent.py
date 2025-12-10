@@ -143,18 +143,27 @@ Press Ctrl+C to stop the server.
     # Following AgentBeats pattern: controller sets AGENT_URL environment variable
     # The controller reads CLOUDRUN_HOST/RAILWAY_PUBLIC_DOMAIN to know its public URL, then sets AGENT_URL for the agent
     # AGENT_URL includes "/to_agent/" path which is the correct base URL for the agent card
+    # However, if AGENT_URL points to wrong domain (e.g., finance-green instead of finance-white),
+    # we use RAILWAY_PUBLIC_DOMAIN as the source of truth
     agent_url = os.environ.get("AGENT_URL")
-    if agent_url:
+    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    
+    if railway_domain and "finance-white" in railway_domain:
+        # Use Railway domain as source of truth for white agent
+        url = f"https://{railway_domain}/to_agent/"
+        if agent_url and "finance-green" in agent_url:
+            print(f"WARNING: AGENT_URL points to green agent ({agent_url}), using RAILWAY_PUBLIC_DOMAIN instead: {url}")
+        else:
+            print(f"Using RAILWAY_PUBLIC_DOMAIN: {url}")
+    elif agent_url:
         url = agent_url
         print(f"Using AGENT_URL from controller: {agent_url}")
+    elif railway_domain:
+        url = f"https://{railway_domain}/to_agent/"
+        print(f"Using RAILWAY_PUBLIC_DOMAIN (AGENT_URL not set): {url}")
     else:
-        # Fallback: Use Railway public domain if available, otherwise construct URL from host/port
-        railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-        if railway_domain:
-            url = f"https://{railway_domain}"
-        else:
-            url = f"http://{host}:{port}"
-        print(f"WARNING: AGENT_URL not set, using fallback: {url}")
+        url = f"http://{host}:{port}"
+        print(f"WARNING: Neither AGENT_URL nor RAILWAY_PUBLIC_DOMAIN set, using fallback: {url}")
         print(f"  This should be set by the controller when running with agentbeats run_ctrl")
     
     card = prepare_white_agent_card(url)
