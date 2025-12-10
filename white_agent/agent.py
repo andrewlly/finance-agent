@@ -142,6 +142,7 @@ Press Ctrl+C to stop the server.
 
     # Following AgentBeats pattern: controller sets AGENT_URL environment variable
     # The controller reads CLOUDRUN_HOST/RAILWAY_PUBLIC_DOMAIN to know its public URL, then sets AGENT_URL for the agent
+    # AGENT_URL includes "/to_agent/" path which is the correct base URL for the agent card
     agent_url = os.environ.get("AGENT_URL")
     if agent_url:
         url = agent_url
