@@ -293,56 +293,25 @@ def start_finance_agent(
     print(f"Starting finance agent in {mode} mode...")
     agent_card_dict = load_agent_card_toml(agent_name)
     
-    # Use controller's public URL (Railway domain) for agent card
-    # The controller proxies requests, so the agent card should advertise the controller URL
-    # Priority: AGENT_CARD_URL > CLOUDRUN_HOST > CONTROLLER_URL > RAILWAY_PUBLIC_DOMAIN > hardcoded Railway URL > local fallback
-    agent_card_url = os.environ.get("AGENT_CARD_URL")
-    cloudrun_host = os.environ.get("CLOUDRUN_HOST")
-    controller_url = os.environ.get("CONTROLLER_URL")
-    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN") or os.environ.get("RAILWAY_STATIC_URL")
+    # Following tau-bench example: controller sets AGENT_URL environment variable
+    # The controller reads CLOUDRUN_HOST to know its public URL, then sets AGENT_URL for the agent
+    # # without controller (for direct mode):
+    # url = f"http://{host}:{port}"
+    # agent_card_dict["url"] = url
     
-    if agent_card_url:
-        # Explicitly set agent card URL (highest priority)
-        url = agent_card_url.rstrip('/')
-        print(f"Using AGENT_CARD_URL: {url}")
-    elif cloudrun_host:
-        # Controller sets CLOUDRUN_HOST (from blog: CLOUDRUN_HOST="your-domain.com")
-        # Remove protocol if present, then add https
-        domain = cloudrun_host.replace('https://', '').replace('http://', '').split('/')[0]
-        url = f"https://{domain}"
-        print(f"Using CLOUDRUN_HOST: {url}")
-    elif controller_url:
-        # Controller explicitly sets its URL
-        url = controller_url.rstrip('/')
-        print(f"Using CONTROLLER_URL: {url}")
-    elif railway_domain:
-        # Use Railway public domain (controller runs on the same domain)
-        # Remove any path if present, we just need the domain
-        domain = railway_domain.split('/')[0] if '/' in railway_domain else railway_domain
-        url = f"https://{domain}"
-        print(f"Using Railway domain: {url}")
-    elif os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME") or host == "0.0.0.0":
-        # We're on Railway (detected by env vars or binding to 0.0.0.0) but domain not set - use the known production URL
-        # Check if we're in production by looking at common Railway indicators
-        if os.environ.get("RAILWAY_ENVIRONMENT") == "production" or not os.environ.get("RAILWAY_ENVIRONMENT"):
-            url = "https://finance-green-production.up.railway.app"
-            print(f"Using hardcoded Railway production URL: {url}")
-        else:
-            # Fallback to local for non-production Railway environments
-            url = f"http://{host}:{port}"
-            print(f"WARNING: Railway environment detected but using fallback: {url}")
+    agent_url = os.environ.get("AGENT_URL")
+    if agent_url:
+        agent_card_dict["url"] = agent_url
+        url = agent_url
+        print(f"Using AGENT_URL from controller: {agent_url}")
     else:
-        # Fallback: construct from host/port (for local development)
+        # Fallback: construct from host/port (for local development without controller)
         url = f"http://{host}:{port}"
-        print(f"Using local development URL: {url}")
-        print(f"  Available env vars: RAILWAY_PUBLIC_DOMAIN={os.environ.get('RAILWAY_PUBLIC_DOMAIN')}")
-        print(f"  Available env vars: RAILWAY_STATIC_URL={os.environ.get('RAILWAY_STATIC_URL')}")
-        print(f"  Available env vars: CLOUDRUN_HOST={cloudrun_host}")
-        print(f"  Available env vars: CONTROLLER_URL={controller_url}")
-        print(f"  Available env vars: RAILWAY_ENVIRONMENT={os.environ.get('RAILWAY_ENVIRONMENT')}")
-        print(f"  Available env vars: RAILWAY_SERVICE_NAME={os.environ.get('RAILWAY_SERVICE_NAME')}")
+        agent_card_dict["url"] = url
+        print(f"WARNING: AGENT_URL not set, using fallback: {url}")
+        print(f"  This should be set by the controller when running with agentbeats run_ctrl")
     
-    agent_card_dict["url"] = url  # complete all required card fields
+    # complete all required card fields
 
     request_handler = DefaultRequestHandler(
         agent_executor=FinanceAgentExecutor(max_num_steps=max_num_steps, mode=mode),
