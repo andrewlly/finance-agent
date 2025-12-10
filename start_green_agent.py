@@ -19,14 +19,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--host",
         type=str,
-        default="localhost",
-        help="Host to bind to (default: localhost)"
+        default=os.environ.get("HOST", os.environ.get("AGENT_HOST", "localhost")),
+        help="Host to bind to (default: localhost or HOST/AGENT_HOST env var)"
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("PORT", 9001)),
-        help="Port to bind to (default: 9001 or PORT env var)"
+        default=int(os.environ.get("AGENT_PORT", os.environ.get("PORT", 9001))),
+        help="Port to bind to (default: 9001 or AGENT_PORT/PORT env var)"
     )
     parser.add_argument(
         "--agent-name",
