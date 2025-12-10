@@ -31,6 +31,7 @@ fsspec==2025.10.0
 google-api-core==2.28.1
 google-auth==2.43.0
 googleapis-common-protos==1.72.0
+google-search-results==2.4.2
 grpcio==1.67.1
 h11==0.16.0
 hf-xet==1.2.0
@@ -81,6 +82,7 @@ rich==14.2.0
 rpds-py==0.29.0
 rsa==4.9.1
 Scrapy==2.13.4
+sec-api==1.0.29
 service-identity==24.2.0
 setuptools==80.9.0
 shellingham==1.5.4
@@ -107,3 +109,4 @@ zipp==3.23.0
 zope.interface==8.1.1
 # AgentBeats controller (requires Python 3.13+)
 earthshaker
+
