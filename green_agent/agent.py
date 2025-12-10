@@ -14,7 +14,7 @@ from a2a.server.apps import A2AStarletteApplication
 from a2a.server.events import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.tasks import InMemoryTaskStore
-from a2a.types import AgentCard, Message, SendMessageSuccessResponse
+from a2a.types import AgentCard, AgentCapabilities, AgentSkill, Message, SendMessageSuccessResponse
 from a2a.utils import get_text_parts, new_agent_text_message
 from get_agent import get_agent
 from my_util import my_a2a, parse_tags
@@ -36,7 +36,29 @@ class FinanceAgentResult:
 def load_agent_card_toml(agent_name):
     current_dir = __file__.rsplit("/", 1)[0]
     with open(f"{current_dir}/{agent_name}.toml", "rb") as f:
-        return tomllib.load(f)
+        card_dict = tomllib.load(f)
+    
+    # Convert camelCase TOML fields to snake_case for AgentCard
+    # A2A TOML spec uses camelCase, but Python AgentCard uses snake_case
+    field_mapping = {
+        "defaultInputModes": "default_input_modes",
+        "defaultOutputModes": "default_output_modes",
+    }
+    
+    converted_dict = {}
+    for key, value in card_dict.items():
+        if key in field_mapping:
+            converted_dict[field_mapping[key]] = value
+        elif key == "capabilities" and isinstance(value, dict):
+            # Convert capabilities dict to AgentCapabilities object
+            converted_dict["capabilities"] = AgentCapabilities(**value)
+        elif key == "skills" and isinstance(value, list):
+            # Convert skills list of dicts to list of AgentSkill objects
+            converted_dict["skills"] = [AgentSkill(**skill) for skill in value]
+        else:
+            converted_dict[key] = value
+    
+    return converted_dict
 
 
 async def ask_white_agent_to_solve(
@@ -271,14 +293,25 @@ def start_finance_agent(
     print(f"Starting finance agent in {mode} mode...")
     agent_card_dict = load_agent_card_toml(agent_name)
     
-    # Use Railway public domain if available, otherwise construct URL from host/port
-    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    if railway_domain:
-        url = f"https://{railway_domain}"
-    else:
-        url = f"http://{host}:{port}"
+    # Following tau-bench example: controller sets AGENT_URL environment variable
+    # The controller reads CLOUDRUN_HOST to know its public URL, then sets AGENT_URL for the agent
+    # # without controller (for direct mode):
+    # url = f"http://{host}:{port}"
+    # agent_card_dict["url"] = url
     
-    agent_card_dict["url"] = url  # complete all required card fields
+    agent_url = os.environ.get("AGENT_URL")
+    if agent_url:
+        agent_card_dict["url"] = agent_url
+        url = agent_url
+        print(f"Using AGENT_URL from controller: {agent_url}")
+    else:
+        # Fallback: construct from host/port (for local development without controller)
+        url = f"http://{host}:{port}"
+        agent_card_dict["url"] = url
+        print(f"WARNING: AGENT_URL not set, using fallback: {url}")
+        print(f"  This should be set by the controller when running with agentbeats run_ctrl")
+    
+    # complete all required card fields
 
     request_handler = DefaultRequestHandler(
         agent_executor=FinanceAgentExecutor(max_num_steps=max_num_steps, mode=mode),

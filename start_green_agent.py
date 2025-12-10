@@ -19,14 +19,14 @@ if __name__ == "__main__":
     parser.add_argument(
         "--host",
         type=str,
-        default="localhost",
-        help="Host to bind to (default: localhost)"
+        default=os.environ.get("HOST", os.environ.get("AGENT_HOST", "localhost")),
+        help="Host to bind to (default: localhost or HOST/AGENT_HOST env var)"
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=int(os.environ.get("PORT", 9001)),
-        help="Port to bind to (default: 9001 or PORT env var)"
+        default=int(os.environ.get("AGENT_PORT", os.environ.get("PORT", 9001))),
+        help="Port to bind to (default: 9001 or AGENT_PORT/PORT env var)"
     )
     parser.add_argument(
         "--agent-name",
@@ -57,10 +57,12 @@ if __name__ == "__main__":
 ║          Finance Agent A2A Server                        ║
 ╚══════════════════════════════════════════════════════════╝
 
-Starting server at: http://{args.host}:{args.port}
+Binding server to: http://{args.host}:{args.port} (internal)
 Agent config: {args.agent_name}.toml
 Mode: {args.mode} ({mode_desc})
 Max steps: {args.max_steps}
+
+Note: Agent card URL will be set from environment variables (CLOUDRUN_HOST, RAILWAY_PUBLIC_DOMAIN, etc.)
 
 Press Ctrl+C to stop the server.
 """)
