@@ -5,7 +5,7 @@
     "buildCommand": "pip install -r requirements.txt"
   },
   "deploy": {
-    "startCommand": "agentbeats run_ctrl",
+    "startCommand": "HTTPS_ENABLED=true agentbeats run_ctrl",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }

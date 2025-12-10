@@ -57,10 +57,12 @@ if __name__ == "__main__":
 ║          Finance Agent A2A Server                        ║
 ╚══════════════════════════════════════════════════════════╝
 
-Starting server at: http://{args.host}:{args.port}
+Binding server to: http://{args.host}:{args.port} (internal)
 Agent config: {args.agent_name}.toml
 Mode: {args.mode} ({mode_desc})
 Max steps: {args.max_steps}
+
+Note: Agent card URL will be set from environment variables (CLOUDRUN_HOST, RAILWAY_PUBLIC_DOMAIN, etc.)
 
 Press Ctrl+C to stop the server.
 """)

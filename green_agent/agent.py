@@ -321,19 +321,26 @@ def start_finance_agent(
         domain = railway_domain.split('/')[0] if '/' in railway_domain else railway_domain
         url = f"https://{domain}"
         print(f"Using Railway domain: {url}")
-    elif os.environ.get("RAILWAY_ENVIRONMENT"):
-        # We're on Railway but domain not set - use the known production URL
-        url = "https://finance-green-production.up.railway.app"
-        print(f"Using hardcoded Railway production URL: {url}")
+    elif os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RAILWAY_SERVICE_NAME") or host == "0.0.0.0":
+        # We're on Railway (detected by env vars or binding to 0.0.0.0) but domain not set - use the known production URL
+        # Check if we're in production by looking at common Railway indicators
+        if os.environ.get("RAILWAY_ENVIRONMENT") == "production" or not os.environ.get("RAILWAY_ENVIRONMENT"):
+            url = "https://finance-green-production.up.railway.app"
+            print(f"Using hardcoded Railway production URL: {url}")
+        else:
+            # Fallback to local for non-production Railway environments
+            url = f"http://{host}:{port}"
+            print(f"WARNING: Railway environment detected but using fallback: {url}")
     else:
         # Fallback: construct from host/port (for local development)
         url = f"http://{host}:{port}"
-        print(f"WARNING: Using fallback URL (Railway domain not found): {url}")
+        print(f"Using local development URL: {url}")
         print(f"  Available env vars: RAILWAY_PUBLIC_DOMAIN={os.environ.get('RAILWAY_PUBLIC_DOMAIN')}")
         print(f"  Available env vars: RAILWAY_STATIC_URL={os.environ.get('RAILWAY_STATIC_URL')}")
         print(f"  Available env vars: CLOUDRUN_HOST={cloudrun_host}")
         print(f"  Available env vars: CONTROLLER_URL={controller_url}")
         print(f"  Available env vars: RAILWAY_ENVIRONMENT={os.environ.get('RAILWAY_ENVIRONMENT')}")
+        print(f"  Available env vars: RAILWAY_SERVICE_NAME={os.environ.get('RAILWAY_SERVICE_NAME')}")
     
     agent_card_dict["url"] = url  # complete all required card fields
 
