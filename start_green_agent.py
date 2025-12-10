@@ -25,8 +25,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--port",
         type=int,
-        default=9001,
-        help="Port to bind to (default: 9001)"
+        default=int(os.environ.get("PORT", 9001)),
+        help="Port to bind to (default: 9001 or PORT env var)"
     )
     parser.add_argument(
         "--agent-name",

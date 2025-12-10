@@ -4,6 +4,7 @@
 import dotenv
 dotenv.load_dotenv()
 
+import os
 import uvicorn
 from a2a.server.apps import A2AStarletteApplication
 from a2a.server.request_handlers import DefaultRequestHandler
@@ -139,7 +140,13 @@ This is the agent that will be TESTED by the green agent.
 Press Ctrl+C to stop the server.
 """)
 
-    url = f"http://{host}:{port}"
+    # Use Railway public domain if available, otherwise construct URL from host/port
+    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if railway_domain:
+        url = f"https://{railway_domain}"
+    else:
+        url = f"http://{host}:{port}"
+    
     card = prepare_white_agent_card(url)
 
     request_handler = DefaultRequestHandler(

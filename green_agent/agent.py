@@ -1,6 +1,7 @@
 """Finance agent implementation - manages assessment and evaluation."""
 
 import json
+import os
 import time
 import tomllib
 from datetime import datetime
@@ -269,7 +270,14 @@ def start_finance_agent(
     """
     print(f"Starting finance agent in {mode} mode...")
     agent_card_dict = load_agent_card_toml(agent_name)
-    url = f"http://{host}:{port}"
+    
+    # Use Railway public domain if available, otherwise construct URL from host/port
+    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+    if railway_domain:
+        url = f"https://{railway_domain}"
+    else:
+        url = f"http://{host}:{port}"
+    
     agent_card_dict["url"] = url  # complete all required card fields
 
     request_handler = DefaultRequestHandler(

@@ -25,8 +25,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--port",
         type=int,
-        default=9002,
-        help="Port to bind to (default: 9002)"
+        default=int(os.environ.get("PORT", 9002)),
+        help="Port to bind to (default: 9002 or PORT env var)"
     )
     parser.add_argument(
         "--model",
