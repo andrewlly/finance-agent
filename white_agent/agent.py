@@ -140,12 +140,21 @@ This is the agent that will be TESTED by the green agent.
 Press Ctrl+C to stop the server.
 """)
 
-    # Use Railway public domain if available, otherwise construct URL from host/port
-    railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
-    if railway_domain:
-        url = f"https://{railway_domain}"
+    # Following AgentBeats pattern: controller sets AGENT_URL environment variable
+    # The controller reads CLOUDRUN_HOST/RAILWAY_PUBLIC_DOMAIN to know its public URL, then sets AGENT_URL for the agent
+    agent_url = os.environ.get("AGENT_URL")
+    if agent_url:
+        url = agent_url
+        print(f"Using AGENT_URL from controller: {agent_url}")
     else:
-        url = f"http://{host}:{port}"
+        # Fallback: Use Railway public domain if available, otherwise construct URL from host/port
+        railway_domain = os.environ.get("RAILWAY_PUBLIC_DOMAIN")
+        if railway_domain:
+            url = f"https://{railway_domain}"
+        else:
+            url = f"http://{host}:{port}"
+        print(f"WARNING: AGENT_URL not set, using fallback: {url}")
+        print(f"  This should be set by the controller when running with agentbeats run_ctrl")
     
     card = prepare_white_agent_card(url)
 
