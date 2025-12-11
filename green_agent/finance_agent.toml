@@ -1,0 +1,70 @@
+name = "finance_green_agent"
+
+description = "Finance agent"
+
+version = "1.0.0"
+
+
+
+defaultInputModes = ["text"]
+
+defaultOutputModes = ["text"]
+
+
+
+[capabilities]
+
+streaming = false
+
+
+
+[[skills]]
+id = "host_assess_finance"
+name = "Finance assessment hosting"
+description = """
+
+Assess an agent's ability to answer finance related questions
+
+"""
+
+tags = ["green agent", "assessment", "finance"]
+
+
+
+examples = [
+
+"""
+
+{
+
+  "mode": "benchmark",
+
+  "num_users": 5,
+
+  "white_agent_url": "http://localhost:9002/",
+
+  "environment_base": "https://finance-green.up.railway.app",
+
+  "use_baseline": false
+
+}
+
+""",
+
+"""
+
+{
+
+  "user_id": 123,
+
+  "mode": "white_agent",
+
+  "white_agent_url": "http://localhost:9002/",
+
+  "environment_base": "https://finance-green.up.railway.app"
+
+}
+
+"""
+
+]

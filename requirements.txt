@@ -1,14 +1,33 @@
+# A2A SDK for agent communication
+a2a-sdk==0.3.19
+
 # LLM clients
-openai==1.61.0
-anthropic==0.47.0
+openai>=2.8.0
+anthropic>=0.75.0
 
-# Web tools
-requests==2.32.3
-beautifulsoup4==4.12.3
-google-search-results==2.4.2  # for serpapi
-sec-api==1.0.29
+# Web and HTTP
+aiohttp>=3.13.0
+httpx>=0.28.0
+requests>=2.32.0
 
+# Web scraping and parsing
+beautifulsoup4>=4.14.0
+lxml>=6.0.0
 
-# Other
-backoff==2.2.1
-aiohttp==3.11.18
+# API clients (if used)
+google-search-results>=2.4.2  # for serpapi
+sec-api>=1.0.29  # for SEC API
+
+# Server framework
+uvicorn>=0.38.0
+fastapi>=0.122.0
+
+# CLI
+typer>=0.20.0
+
+# Utilities
+backoff>=2.2.0
+python-dotenv>=1.2.0
+
+# AgentBeats controller (requires Python 3.13+)
+earthshaker
