@@ -1,11 +1,14 @@
 """Finance agent implementation - manages assessment and evaluation."""
 
+import csv
 import json
 import os
+import random
 import time
 import tomllib
 from datetime import datetime
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, List
 
 import dotenv
 import uvicorn
@@ -20,6 +23,78 @@ from get_agent import get_agent
 from my_util import my_a2a, parse_tags
 
 dotenv.load_dotenv()
+
+
+# Cache for questions loaded from CSV
+_questions_cache: List[str] = None
+
+
+def load_questions_from_csv(csv_path: str = None) -> List[str]:
+    """
+    Load questions from public.csv file.
+    
+    Args:
+        csv_path: Path to the CSV file. If None, uses data/public.csv relative to project root.
+    
+    Returns:
+        List of questions from the CSV file.
+    """
+    global _questions_cache
+    
+    # Return cached questions if available
+    if _questions_cache is not None:
+        return _questions_cache
+    
+    # Determine CSV path
+    if csv_path is None:
+        # Get project root (parent of green_agent directory)
+        project_root = Path(__file__).parent.parent
+        csv_path = project_root / "data" / "public.csv"
+    else:
+        csv_path = Path(csv_path)
+    
+    questions = []
+    
+    try:
+        with open(csv_path, 'r', encoding='utf-8') as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                question = row.get('Question', '').strip()
+                if question:  # Only add non-empty questions
+                    questions.append(question)
+        
+        print(f"@@@ Loaded {len(questions)} questions from {csv_path}")
+        _questions_cache = questions
+        return questions
+    except FileNotFoundError:
+        print(f"@@@ WARNING: CSV file not found at {csv_path}")
+        return []
+    except Exception as e:
+        print(f"@@@ ERROR loading questions from CSV: {e}")
+        return []
+
+
+def get_random_question(csv_path: str = None) -> str:
+    """
+    Get a random question from public.csv.
+    
+    Args:
+        csv_path: Path to the CSV file. If None, uses data/public.csv relative to project root.
+    
+    Returns:
+        A random question string, or a default question if CSV cannot be loaded.
+    """
+    questions = load_questions_from_csv(csv_path)
+    
+    if questions:
+        question = random.choice(questions)
+        print(f"@@@ Selected random question: {question[:100]}...")
+        return question
+    else:
+        # Fallback to default question if CSV loading fails
+        default = "What was Apple's revenue in 2023?"
+        print(f"@@@ WARNING: Could not load questions from CSV, using default: {default}")
+        return default
 
 
 # Finance agent specific types (replacing tau_bench types)
@@ -177,7 +252,9 @@ class FinanceAgentExecutor(AgentExecutor):
         # parse the task
         print(f"Finance agent: Received a task, parsing... (mode: {self.mode})")
         user_input = context.get_user_input()
+        print(f"@@@ Raw user input: {user_input[:500]}...")
         tags = parse_tags(user_input)
+        print(f"@@@ Parsed tags: {list(tags.keys())}")
 
         # Extract configuration from user input
         config_str = tags.get("config", tags.get("env_config", "{}"))
@@ -187,7 +264,30 @@ class FinanceAgentExecutor(AgentExecutor):
         mode = config.get("mode", self.mode)
 
         # Extract question and white agent URL
-        question = tags.get("question", user_input)
+        # Priority: 1) <question> tag, 2) config.question, 3) extract from user_input, 4) random from CSV
+        question = tags.get("question") or config.get("question")
+        
+        # If no explicit question, try to extract from user_input
+        # (skip if user_input is just instructions about assessing agents)
+        if not question:
+            # Check if user_input contains actual question content (not just instructions)
+            user_input_lower = user_input.lower()
+            # If it's just instructions about assessing agents, use a random question from CSV
+            if ("assess" in user_input_lower or "task is to" in user_input_lower) and "agent" in user_input_lower:
+                # This looks like instructions, not a question - use random question from CSV
+                csv_path = config.get("csv_path")  # Allow override via config
+                question = get_random_question(csv_path)
+                print(f"@@@ WARNING: No explicit question found in message. Using random question from CSV")
+            else:
+                # Try to use user_input, but clean it up
+                question = user_input.strip()
+                # Remove common instruction patterns
+                if question.startswith("Your task is to") or question.startswith("assess"):
+                    csv_path = config.get("csv_path")  # Allow override via config
+                    question = get_random_question(csv_path)
+                    print(f"@@@ WARNING: User input appears to be instructions. Using random question from CSV")
+        
+        print(f"@@@ Final question to ask white agent: {question}")
         white_agent_url = tags.get("white_agent_url")
 
         metrics = {}
