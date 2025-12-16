@@ -5,8 +5,8 @@ from model_library.registry_utils import get_registry_model
 
 from src.benchmark.utils.model_library_utils import create_override_config
 
-from .agent import Agent, agent_logger
-from .tools import (
+from agent import Agent, agent_logger
+from tools import (
     EDGARSearch,
     GoogleWebSearch,
     ParseHtmlPage,
