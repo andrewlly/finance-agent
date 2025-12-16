@@ -1,5 +1,27 @@
 from datetime import datetime
 
+TOKEN_KEYS = [
+    "in_tokens",
+    "out_tokens",
+    "reasoning_tokens",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "total_input_tokens",
+    "total_output_tokens",
+]
+
+COST_KEYS = [
+    "input",
+    "output",
+    "reasoning",
+    "cache_read",
+    "cache_write",
+    "total_input",
+    "total_output",
+    "total",
+]
+
+
 INSTRUCTIONS_PROMPT = """You are a financial agent. Today is April 07, 2025. You are given a question and you need to answer it using the tools provided.
 You may not interract with the user.
 When you have the answer, you should respond with 'FINAL ANSWER:' followed by your answer.
@@ -19,7 +41,7 @@ Question:
 """
 
 
-def merge_statistics(metadata: dict) -> dict:
+def _merge_statistics(metadata: dict) -> dict:
     """
     Merge turn-level statistics into session-level statistics.
 
@@ -29,40 +51,22 @@ def merge_statistics(metadata: dict) -> dict:
     Returns:
         dict: Updated metadata with merged statistics
     """
-    # Reset aggregate values to recalculate
-    metadata["total_tokens"] = {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-    }
-    metadata["total_tokens_retrieval"] = {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-    }
-    metadata["tool_usage"] = {}
-    metadata["tool_calls_count"] = 0
-    metadata["api_calls_count"] = len(metadata["turns"])
-    metadata["error_count"] = 0
-
     # Aggregate statistics from all turns
     for turn in metadata["turns"]:
-        # Aggregate token usage
-        metadata["total_tokens"]["prompt_tokens"] += turn["tokens"]["prompt_tokens"]
-        metadata["total_tokens"]["completion_tokens"] += turn["tokens"][
-            "completion_tokens"
-        ]
-        metadata["total_tokens"]["total_tokens"] += turn["tokens"]["total_tokens"]
-        metadata["total_tokens_retrieval"]["prompt_tokens"] += turn["tokens_retrieval"][
-            "prompt_tokens"
-        ]
-        metadata["total_tokens_retrieval"]["completion_tokens"] += turn[
-            "tokens_retrieval"
-        ]["completion_tokens"]
-        metadata["total_tokens_retrieval"]["total_tokens"] += turn["tokens_retrieval"][
-            "total_tokens"
-        ]
-        # Count errors
+        metadata["total_cost"] += turn["total_cost"]
+        for key in TOKEN_KEYS:
+            metadata["total_tokens"][key] += turn["combined_metadata"].get(key, 0) or 0
+
+        for key in TOKEN_KEYS:
+            metadata["total_tokens_query"][key] += (
+                turn["query_metadata"].get(key, 0) or 0
+            )
+
+        if "retrieval_metadata" in turn:
+            rm = turn["retrieval_metadata"]
+            for key in TOKEN_KEYS:
+                metadata["total_tokens_retrieval"][key] += rm.get(key, 0) or 0
+
         metadata["error_count"] += len(turn["errors"])
 
         # Aggregate tool usage
@@ -80,29 +84,3 @@ def merge_statistics(metadata: dict) -> dict:
         metadata["total_duration_seconds"] = (end - start).total_seconds()
 
     return metadata
-
-
-# Filter out by pattern because all providers dont throw the same exceptions to OpenAI SDK
-def is_token_limit_error(error_msg: str) -> bool:
-    token_limit_patterns = [
-        "token limit",
-        "tokens_exceeded_error",
-        "context length",
-        "maximum context length",
-        "token_limit_exceeded",
-        "maximum tokens",
-        "too many tokens",
-        "prompt is too long",
-        "maximum prompt length",
-        "maximum number of tokens allowed",
-        "input length and `max_tokens` exceed context",
-        "error code: 400",
-        "error code: 413",
-        "string too long",
-        "413",
-        "request exceeds the maximum size",
-        "request_too_large",
-        "too many total text bytes",
-    ]
-
-    return any(pattern in error_msg.lower() for pattern in token_limit_patterns)

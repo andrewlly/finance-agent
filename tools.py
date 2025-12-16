@@ -1,17 +1,20 @@
 import json
 import os
 import re
+import traceback
 from abc import ABC, abstractmethod
 
 import aiohttp
 import backoff
-from anthropic.types.tool_use_block import ToolUseBlock
 from bs4 import BeautifulSoup
-from llm import GeneralLLM
-from logger import get_logger
-from openai.types.chat import ChatCompletionMessageToolCall
+
+from model_library.base import LLM, ToolBody, ToolDefinition
+
+from .logger import get_logger
 
 tool_logger = get_logger(__name__)
+
+MAX_END_DATE = "2025-04-07"
 
 
 def is_429(exception):
@@ -59,68 +62,17 @@ class Tool(ABC):
     ):
         super().__init__()
 
-    def parse_tool_message(
-        self,
-        provider="openai",
-        message: str | ChatCompletionMessageToolCall | ToolUseBlock = None,
-    ):
-        """
-        Get the tool format for different providers.
+    def get_tool_definition(self) -> ToolDefinition:
+        body = ToolBody(
+            name=self.name,
+            description=self.description,
+            properties=self.input_arguments,
+            required=self.required_arguments,
+        )
 
-        Args:
-            provider (str): The provider to format the tool for ('openai' or 'anthropic')
+        definition = ToolDefinition(name=self.name, body=body)
 
-        Returns:
-            dict: Formatted tool definition
-        """
-        if provider.lower() != "anthropic":
-            arguments = message.function.arguments
-        elif provider.lower() == "anthropic":
-            arguments = message.input
-        else:
-            raise ValueError(f"Unsupported provider: {provider}")
-
-        return arguments
-
-    def get_tool_json(self, provider: str = "openai", strict: bool = True) -> dict:
-        if provider.lower() == "anthropic":
-            return {
-                "name": self.name,
-                "description": self.description,
-                "input_schema": {
-                    "type": "object",
-                    "properties": self.input_arguments,
-                    "required": self.required_arguments,
-                },
-            }
-        elif provider.lower() == "mistralai":
-            return {
-                "type": "function",
-                "function": {
-                    "name": self.name,
-                    "description": self.description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": self.input_arguments,
-                        "required": self.required_arguments,
-                    },
-                },
-            }
-        else:
-            return {
-                "type": "function",
-                "function": {
-                    "name": self.name,
-                    "description": self.description,
-                    "parameters": {
-                        "type": "object",
-                        "properties": self.input_arguments,
-                        "required": self.required_arguments,
-                        "additionalProperties": False,
-                    },
-                    "strict": strict,
-                },
-            }
+        return definition
 
     @abstractmethod
     def call_tool(self, arguments: dict, *args, **kwargs) -> list[str]:
@@ -128,7 +80,7 @@ class Tool(ABC):
 
     async def __call__(self, arguments: dict = None, *args, **kwargs) -> list[str]:
         tool_logger.info(
-            f"\033[1;34m[TOOL: {self.name.upper()}]\033[0m Calling with arguments: {arguments}"
+            f"\033[1;33m[TOOL: {self.name.upper()}]\033[0m Calling with arguments: {arguments}"
         )
 
         try:
@@ -145,10 +97,18 @@ class Tool(ABC):
             else:
                 return {"success": True, "result": json.dumps(tool_result)}
         except Exception as e:
-            tool_logger.error(
-                f"\033[1;31m[TOOL: {self.name.upper()}]\033[0m Error: {e}"
-            )
-            return {"success": False, "result": str(e)}
+            is_verbose = os.environ.get("EDGAR_AGENT_VERBOSE", "0") == "1"
+            error_msg = str(e)
+            if is_verbose:
+                error_msg += f"\nTraceback: {traceback.format_exc()}"
+                tool_logger.warning(
+                    f"\033[1;31m[TOOL: {self.name.upper()}]\033[0m Error: {e}\nTraceback: {traceback.format_exc()}"
+                )
+            else:
+                tool_logger.warning(
+                    f"\033[1;31m[TOOL: {self.name.upper()}]\033[0m Error: {e}"
+                )
+            return {"success": False, "result": error_msg}
 
 
 class GoogleWebSearch(Tool):
@@ -165,7 +125,7 @@ class GoogleWebSearch(Tool):
     def __init__(
         self,
         top_n_results: int = 10,
-        serpapi_api_key: str = os.getenv("SERP_API_KEY"),
+        serpapi_api_key: str | None = None,
         *args,
         **kwargs,
     ):
@@ -178,10 +138,9 @@ class GoogleWebSearch(Tool):
             **kwargs,
         )
         self.top_n_results = top_n_results
-        self.serpapi_api_key = serpapi_api_key
-
         if serpapi_api_key is None:
-            raise Exception("SERP_API_KEY is not set")
+            serpapi_api_key = os.getenv("SERPAPI_API_KEY")
+        self.serpapi_api_key = serpapi_api_key
 
     @retry_on_429
     async def _execute_search(self, search_query: str) -> list[str]:
@@ -194,11 +153,21 @@ class GoogleWebSearch(Tool):
         Returns:
             list[str]: A list of results from Google Search
         """
+        if not self.serpapi_api_key:
+            raise ValueError("SERPAPI_API_KEY is not set")
+
+        # Google expect MM/DD/YYYY format
+        max_date_parts = MAX_END_DATE.split("-")
+        google_date_format = (
+            f"{max_date_parts[1]}/{max_date_parts[2]}/{max_date_parts[0]}"
+        )
+
         params = {
             "api_key": self.serpapi_api_key,
             "engine": "google",
             "q": search_query,
             "num": self.top_n_results,
+            "tbs": f"cdr:1,cd_max:{google_date_format}",
         }
 
         async with aiohttp.ClientSession() as session:
@@ -268,7 +237,7 @@ class EDGARSearch(Tool):
 
     def __init__(
         self,
-        sec_api_key: str = os.getenv("SEC_API_KEY"),
+        sec_api_key: str | None = None,
         *args,
         **kwargs,
     ):
@@ -276,11 +245,10 @@ class EDGARSearch(Tool):
             *args,
             **kwargs,
         )
+        if sec_api_key is None:
+            sec_api_key = os.getenv("SEC_EDGAR_API_KEY")
         self.sec_api_key = sec_api_key
         self.sec_api_url = "https://api.sec-api.io/full-text-search"
-
-        if sec_api_key is None:
-            raise Exception("SEC_API_KEY is not set")
 
     @retry_on_429
     async def _execute_search(
@@ -308,6 +276,10 @@ class EDGARSearch(Tool):
         Returns:
             list[str]: A list of filing results
         """
+
+        if not self.sec_api_key:
+            raise ValueError("SEC_EDGAR_API_KEY is not set")
+
         # Parse form_types if it's a string representation of a JSON array
         if (
             isinstance(form_types, str)
@@ -330,12 +302,15 @@ class EDGARSearch(Tool):
                 # Fallback to simple parsing if JSON parsing fails
                 ciks = [item.strip(" \"'") for item in ciks[1:-1].split(",")]
 
+        if end_date > MAX_END_DATE:
+            end_date = MAX_END_DATE
+
         payload = {
             "query": query,
             "formTypes": form_types,
             "ciks": ciks,
             "startDate": start_date,
-            "endDate": end_date,
+            "endDate": end_date,  # This will always be at most "2025-04-07"
             "page": page,
         }
 
@@ -357,7 +332,13 @@ class EDGARSearch(Tool):
         try:
             return await self._execute_search(**arguments)
         except Exception as e:
-            tool_logger.error(f"SEC API error: {e}")
+            is_verbose = os.environ.get("EDGAR_AGENT_VERBOSE", "0") == "1"
+            if is_verbose:
+                tool_logger.error(
+                    f"SEC API error: {e}\nTraceback: {traceback.format_exc()}"
+                )
+            else:
+                tool_logger.error(f"SEC API error: {e}")
             raise
 
 
@@ -413,7 +394,13 @@ class ParseHtmlPage(Tool):
                         "Timeout error when parsing HTML page after 60 seconds. The URL might be blocked or the server is taking too long to respond."
                     )
                 else:
-                    raise e
+                    is_verbose = os.environ.get("EDGAR_AGENT_VERBOSE", "0") == "1"
+                    if is_verbose:
+                        raise Exception(
+                            str(e) + "\nTraceback: " + traceback.format_exc()
+                        )
+                    else:
+                        raise Exception(str(e))
 
         soup = BeautifulSoup(html_content, "html.parser")
 
@@ -527,7 +514,7 @@ class RetrieveInformation(Tool):
         )
 
     async def call_tool(
-        self, arguments: dict, data_storage: dict, model: GeneralLLM, *args, **kwargs
+        self, arguments: dict, data_storage: dict, model: LLM, *args, **kwargs
     ) -> list[str]:
         prompt: str = arguments.get("prompt")
         input_character_ranges = arguments.get("input_character_ranges", {})
@@ -580,14 +567,9 @@ class RetrieveInformation(Tool):
                 f"ERROR: The key {str(e)} was not found in the data storage. Available keys are: {', '.join(data_storage.keys())}"
             )
 
-        model_response = await model.safe_chat(
-            messages=[
-                {"role": "user", "content": prompt},
-            ],
-            ignore_token_error=True,
-        )
+        response = await model.query(prompt)
 
         return {
-            "retrieval": model.parse_response(model_response),
-            "usage": model.convert_usage(model_response.usage),
+            "retrieval": response.output_text_str,
+            "usage": {**response.metadata.model_dump()},
         }
