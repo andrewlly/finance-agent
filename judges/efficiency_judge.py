@@ -15,7 +15,7 @@ class EfficiencyJudge(BaseJudge):
             agent_cost = logs.get('total_cost', 0.0)
 
         expert_mins = question.get('expert_time', 5.0)
-        HUMAN_HOURLY_RATE = 100.0
+        HUMAN_HOURLY_RATE = 60.0
         human_cost_per_min = HUMAN_HOURLY_RATE / 60.0
         
         expert_cost = expert_mins * human_cost_per_min
@@ -63,9 +63,9 @@ class EfficiencyJudge(BaseJudge):
         else: status = "POOR"
 
         if meta['savings_pct'] > 99:
-            econ_status = "Free Labor (<1% of human cost)"
+            econ_status = "Perfect (<1% of human cost)"
         elif meta['savings_pct'] > 90:
-            econ_status = "Massive Savings (>90%)"
+            econ_status = "GOOD (>90%)"
         else:
             econ_status = f"{meta['savings_pct']}% Cheaper"
 

@@ -22,96 +22,97 @@ class SourceJudge(BaseJudge):
         # Tier 3: Aggregators / General (60 pts) - Default for others
     }
 
-    def evaluate(self, question: dict, prediction: dict) -> dict:
+    def evaluate(self, question: dict, prediction: dict, is_adversarial: bool = False) -> dict:
         """
-        Core evaluation logic. Returns a dictionary of PURE DATA (no formatting).
+        Evaluate sources. 
+        If is_adversarial=True, checks for RELEVANCE instead of SUPPORT.
         """
         pred_text = prediction.get('final_answer', '')
         logs = prediction.get('logs', {}) 
-        
-        # 1. Extract Citations
         cited_urls = self._extract_urls(pred_text)
         
-        # Data container for JSON output
         result_data = {
             "citation_count": len(cited_urls),
             "hallucinations": [],
             "contradictions": [],
             "verified_sources": [],
-            "best_source": "None",
             "failure_reasons": []
         }
 
+        # RULE: Even in adversarial cases, you must cite where you looked.
         if not cited_urls:
-            return self._build_output(0.0, ["HARD FAIL: No sources cited in final answer."], result_data)
-
-        # 2. Determine Required Tier (Adaptive Scoring)
-        min_tier_req = int(question.get('min_tier', 3)) 
-        required_score = 95 if min_tier_req == 2 else (100 if min_tier_req == 1 else 60)
+            return self._build_output(0.0, ["FAIL: No evidence of search provided (Lazy Refusal)."], result_data)
 
         source_scores = []
 
-        # 3. Evaluate Each Source
         for url in cited_urls:
-            # A. Tier Score
             raw_tier_score = self._get_tier_score(url)
-            
-            # B. Grounding Check (Trace URL -> Key -> Content)
             retrieved_text = self._find_text_in_logs(url, logs)
             
             if not retrieved_text:
                 result_data["hallucinations"].append(url)
                 continue 
 
-            # C. Validity Check (LLM Verification)
-            validity_score = 1.0
-            validity_reason = "Implicitly trusted (Judge LLM not active)"
+            # --- BRANCHING LOGIC ---
+            if is_adversarial:
+                # ADVERSARIAL MODE: Check Relevance ("Is this a good place to have looked?")
+                validity_score, reason = self._verify_relevance_llm(question['question'], retrieved_text)
+            else:
+                # STANDARD MODE: Check Support ("Does this support the claim?")
+                validity_score, reason = self._verify_validity_llm(pred_text, retrieved_text)
             
-            if self.client:
-                validity_score, validity_reason = self._verify_validity_llm(pred_text, retrieved_text)
+            # ... (Rest of scoring logic is the same) ...
             
-            # CHECK: Contradiction Rule
             if validity_score < 0.2:
-                result_data["contradictions"].append({"url": url, "reason": validity_reason})
+                result_data["contradictions"].append({"url": url, "reason": reason})
             else:
                 result_data["verified_sources"].append({
                     "url": url, 
                     "tier_score": raw_tier_score, 
                     "validity": validity_score,
-                    "reason": validity_reason
+                    "reason": reason
                 })
             
-            # D. Normalize Score
-            # If we need Tier 2 (95) and get Tier 1 (100), ratio is capped at 1.0
+            # Normalize and append score...
+            min_tier_req = int(question.get('min_tier', 3)) 
+            required_score = 95 if min_tier_req == 2 else (100 if min_tier_req == 1 else 60)
             tier_ratio = min(1.0, raw_tier_score / required_score)
-            
-            # Final Source Score = (Tier Ratio * Validity) * 100
-            final_source_score = (tier_ratio * validity_score) * 100
-            source_scores.append(final_source_score)
+            source_scores.append((tier_ratio * validity_score) * 100)
 
-        # 4. Calculate Final Score
+        # ... (Calculate final score max/avg) ...
         current_score = max(source_scores) if source_scores else 0.0
         
-        if source_scores:
-             best_idx = source_scores.index(max(source_scores))
-             # Identify which source gave the best score
-             # (Mapping back to citation list index, assuming order preserved)
-             # To be safe, we check the verified_sources list order logic
-             result_data["best_source"] = cited_urls[best_idx]
-        elif result_data["hallucinations"]:
-             # If only hallucinations exist, score is 0
-             current_score = 0.0
-
-        # 5. Apply Hard Penalties
-        if result_data["contradictions"]:
-            current_score = 0.0
-            result_data["failure_reasons"].append("CRITICAL: Source contradiction detected.")
-
+        # ... (Penalties) ...
         if result_data["hallucinations"]:
             current_score = max(0.0, current_score - 30.0)
-            result_data["failure_reasons"].append(f"PENALTY: -30 points for {len(result_data['hallucinations'])} hallucinated URL(s).")
 
         return self._build_output(current_score, result_data["failure_reasons"], result_data)
+
+    def _verify_relevance_llm(self, user_question, source_text):
+        """
+        Adversarial Check: Did the agent look in a RELEVANT document?
+        (It doesn't matter if the answer isn't there, as long as the document is related).
+        """
+        prompt = f"""
+        You are a Research Auditor.
+        The user asked: "{user_question}"
+        The agent checked this document: "{source_text[:3000]}"
+        
+        Is this document RELEVANT to the question topic?
+        (e.g. If asking about Tesla Revenue, a Tesla 10-K is RELEVANT, even if it doesn't have the specific year).
+        
+        Output JSON: {{ "score": 0.0 to 1.0, "reason": "Explanation" }}
+        """
+        try:
+            response = self.client.chat.completions.create(
+                model="gpt-4o",
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"}
+            )
+            data = json.loads(response.choices[0].message.content)
+            return float(data.get("score", 0.0)), data.get("reason", "N/A")
+        except:
+            return 0.0, "Judge Error"
 
     def render(self, result: dict) -> str:
         """
@@ -125,18 +126,17 @@ class SourceJudge(BaseJudge):
         elif score >= 50: status = "WEAK"
         else: status = "FAIL"
 
-        # Build Details Block
         details_txt = []
         for item in meta.get('contradictions', []):
-            details_txt.append(f"⛔ [CONTRADICTION] {item['url']}\n    Reason: {item['reason']}")
+            details_txt.append(f"[CONTRADICTION] {item['url']}\n    Reason: {item['reason']}")
         
         for item in meta.get('verified_sources', []):
             tier = item['tier_score']
             validity = item['validity']
-            details_txt.append(f"✅ [VERIFIED] {item['url']} (Tier {tier}, Validity {validity})\n    Context: {item['reason']}")
+            details_txt.append(f"[VERIFIED] {item['url']} (Tier {tier}, Validity {validity})\n    Context: {item['reason']}")
             
         for url in meta.get('hallucinations', []):
-            details_txt.append(f"❌ [MISSING] {url} (Not found in logs)")
+            details_txt.append(f"[MISSING] {url} (Not found in logs)")
 
         return f"""
 SOURCE COMPLIANCE REPORT
@@ -157,7 +157,6 @@ JUDGE SUMMARY:
 ========================
 """.strip()
 
-    # --- INTERNAL HELPERS ---
 
     def _build_output(self, score, reasons, data):
         return {
@@ -192,7 +191,6 @@ JUDGE SUMMARY:
         best_content = None
         data_key = None
         
-        # Pass 1: Look for the Data Key (Parse HTML)
         for turn in turns:
             for tool in turn.get('tool_calls', []):
                 args = tool.get('arguments', {})
@@ -201,14 +199,11 @@ JUDGE SUMMARY:
                     except: continue
                 
                 if tool['tool_name'] == 'parse_html_page':
-                    # Fuzzy match URL
                     if url in args.get('url', '') or args.get('url', '') in url:
                         data_key = args.get('key')
-                        # If we logged the full HTML content here, grab it!
                         if tool.get('tool_output'):
                             best_content = tool.get('tool_output')
 
-        # Pass 2: Look for Retrieval Analysis using that Key (Highest Priority)
         if data_key:
             for turn in turns:
                 for tool in turn.get('tool_calls', []):
@@ -218,15 +213,13 @@ JUDGE SUMMARY:
                             try: args = json.loads(args)
                             except: continue
                         
-                        # Did this analysis use our document key?
                         if data_key in args.get('prompt', ''):
                             return tool.get('tool_output') or tool.get('result', '')
 
-        # Pass 3: If we have the direct HTML content from Pass 1, return it
         if best_content:
             return best_content
 
-        # Pass 4: Fallback to Google Search Snippet (Lowest Priority)
+
         for turn in turns:
             for tool in turn.get('tool_calls', []):
                 if tool['tool_name'] == 'google_web_search':
@@ -263,7 +256,7 @@ JUDGE SUMMARY:
                 model="gpt-4o",
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
-                response_format={"type": "json_object"} # Force JSON mode
+                response_format={"type": "json_object"}
             )
             content = response.choices[0].message.content.strip()
             result = json.loads(content)

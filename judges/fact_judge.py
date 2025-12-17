@@ -18,10 +18,8 @@ class FactJudge(BaseJudge):
         
         # 2. Decide Evaluation Mode
         if criteria:
-            # RUBRIC MODE: Check specific atomic facts
             return self._evaluate_with_rubric(pred_text, criteria)
         else:
-            # SEMANTIC MODE: Compare Pred vs GT directly
             return self._evaluate_semantic(pred_text, gt_text)
 
     def render(self, result: dict) -> str:
