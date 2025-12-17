@@ -58,21 +58,27 @@ class Agent(ABC):
         # hijack llm logger
         self.llm.logger = agent_logger
 
-    async def _find_final_answer(self, response_text: str) -> str:
+    async def _find_final_answer(self, response_text: str) -> tuple[str, float]:
         """
-        Search through the response text for the presence of 'FINAL ANSWER:', and if its present,
-        extract the answer and any sources
+        Search for 'FINAL ANSWER:', extract the text, the JSON sources, 
+        and the Confidence Score.
+        
+        Returns:
+            tuple: (full_answer_string, confidence_score)
         """
         final_answer_pattern = re.compile(r"FINAL ANSWER:", re.IGNORECASE)
 
-        if isinstance(response_text, str) and final_answer_pattern.search(
-            response_text
-        ):
+        if isinstance(response_text, str) and final_answer_pattern.search(response_text):
+            
+            confidence_match = re.search(r"CONFIDENCE:\s*(\d+)", response_text, re.IGNORECASE)
+            confidence = float(confidence_match.group(1)) if confidence_match else 0.0
+
             final_answer_match = re.search(
-                r"FINAL ANSWER:(.*?)(?:\{\"sources\"|\Z)",
+                r"FINAL ANSWER:(.*?)(?:CONFIDENCE:|\{\"sources\"|\Z)",
                 response_text,
-                re.DOTALL,
+                re.DOTALL | re.IGNORECASE
             )
+
             sources_match = re.search(r"(\{\"sources\".*\})", response_text, re.DOTALL)
 
             answer_text = (
@@ -86,10 +92,12 @@ class Agent(ABC):
                 final_answer = f"{answer_text}\n\n{sources_text}"
 
             agent_logger.info(f"\033[1;32m[FINAL ANSWER]\033[0m {final_answer}")
-            return final_answer
+            agent_logger.info(f"\033[1;32m[CONFIDENCE]\033[0m {confidence}")
+            
+            return final_answer, confidence
 
-        return None
-
+        return None, 0.0
+    
     async def _process_tool_calls(
         self, tool_calls: list[ToolCall], data_storage: dict, turn_metadata: dict
     ):
