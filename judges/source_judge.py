@@ -1,49 +1,56 @@
-# judges/source_judge.py
 import re
 import json
 from urllib.parse import urlparse
 from .base import BaseJudge
 
-
 class SourceJudge(BaseJudge):
-    # Tier Definitions
+    # Tier Definitions: Higher score = More trusted
     TIER_SCORES = {
+        # Tier 1: Primary / Gold Standard (100 pts)
         "sec.gov": 100,
         "investor.": 100,
         "ir.": 100,
+        
+        # Tier 2: Reputable Financial News (95 pts)
         "bloomberg.com": 95,
         "reuters.com": 95,
         "finance.yahoo.com": 95,
         "wsj.com": 95,
         "cnbc.com": 95,
         "marketwatch.com": 95,
+        
+        # Tier 3: Aggregators / General (60 pts) - Default for others
     }
 
     def evaluate(self, question: dict, prediction: dict) -> dict:
+        """
+        Core evaluation logic. Returns a dictionary of PURE DATA (no formatting).
+        """
         pred_text = prediction.get('final_answer', '')
         logs = prediction.get('logs', {}) 
         
         # 1. Extract Citations
         cited_urls = self._extract_urls(pred_text)
         
-        # Initialize Report Data
-        audit_data = {
+        # Data container for JSON output
+        result_data = {
             "citation_count": len(cited_urls),
             "hallucinations": [],
             "contradictions": [],
-            "best_source": "N/A",
-            "details": []
+            "verified_sources": [],
+            "best_source": "None",
+            "failure_reasons": []
         }
 
         if not cited_urls:
-            return self._finalize_result(0.0, "HARD FAIL: No sources cited in final answer.", audit_data)
+            return self._build_output(0.0, ["HARD FAIL: No sources cited in final answer."], result_data)
 
-        # 2. Determine Required Tier
+        # 2. Determine Required Tier (Adaptive Scoring)
         min_tier_req = int(question.get('min_tier', 3)) 
         required_score = 95 if min_tier_req == 2 else (100 if min_tier_req == 1 else 60)
 
         source_scores = []
-        
+
         # 3. Evaluate Each Source
         for url in cited_urls:
             # A. Tier Score
@@ -53,92 +60,111 @@ class SourceJudge(BaseJudge):
             retrieved_text = self._find_text_in_logs(url, logs)
             
             if not retrieved_text:
-                audit_data["hallucinations"].append(url)
-                audit_data["details"].append(f"[MISSING] {url}: URL cited but not found in execution logs.")
+                result_data["hallucinations"].append(url)
                 continue 
 
-            # C. Validity Check (LLM Verification with Reasoning)
+            # C. Validity Check (LLM Verification)
             validity_score = 1.0
             validity_reason = "Implicitly trusted (Judge LLM not active)"
             
             if self.client:
-                # Returns tuple: (score, reason)
                 validity_score, validity_reason = self._verify_validity_llm(pred_text, retrieved_text)
             
             # CHECK: Contradiction Rule
             if validity_score < 0.2:
-                audit_data["contradictions"].append(url)
-                audit_data["details"].append(f"[CONTRADICTION] {url}: {validity_reason}")
+                result_data["contradictions"].append({"url": url, "reason": validity_reason})
             else:
-                audit_data["details"].append(f"[VERIFIED] {url} (Tier: {raw_tier_score}): {validity_reason}")
+                result_data["verified_sources"].append({
+                    "url": url, 
+                    "tier_score": raw_tier_score, 
+                    "validity": validity_score,
+                    "reason": validity_reason
+                })
             
             # D. Normalize Score
+            # If we need Tier 2 (95) and get Tier 1 (100), ratio is capped at 1.0
             tier_ratio = min(1.0, raw_tier_score / required_score)
+            
+            # Final Source Score = (Tier Ratio * Validity) * 100
             final_source_score = (tier_ratio * validity_score) * 100
             source_scores.append(final_source_score)
 
-        # 4. Scoring Logic
+        # 4. Calculate Final Score
         current_score = max(source_scores) if source_scores else 0.0
         
         if source_scores:
              best_idx = source_scores.index(max(source_scores))
-             audit_data["best_source"] = cited_urls[best_idx]
-        elif audit_data["hallucinations"]:
+             # Identify which source gave the best score
+             # (Mapping back to citation list index, assuming order preserved)
+             # To be safe, we check the verified_sources list order logic
+             result_data["best_source"] = cited_urls[best_idx]
+        elif result_data["hallucinations"]:
+             # If only hallucinations exist, score is 0
              current_score = 0.0
 
-        # Apply Penalties
-        failure_reasons = []
-        if audit_data["contradictions"]:
+        # 5. Apply Hard Penalties
+        if result_data["contradictions"]:
             current_score = 0.0
-            failure_reasons.append("CRITICAL: Source contradiction detected.")
+            result_data["failure_reasons"].append("CRITICAL: Source contradiction detected.")
 
-        if audit_data["hallucinations"]:
+        if result_data["hallucinations"]:
             current_score = max(0.0, current_score - 30.0)
-            failure_reasons.append(f"PENALTY: -30 points for {len(audit_data['hallucinations'])} hallucinated URL(s).")
+            result_data["failure_reasons"].append(f"PENALTY: -30 points for {len(result_data['hallucinations'])} hallucinated URL(s).")
 
-        final_reason = " ".join(failure_reasons) if failure_reasons else "All sources verified compliant."
-        
-        return self._finalize_result(current_score, final_reason, audit_data)
+        return self._build_output(current_score, result_data["failure_reasons"], result_data)
 
-    def _finalize_result(self, score, reason, data):
-        """Helper to package the score + the text report (Natural/Professional Style)"""
+    def render(self, result: dict) -> str:
+        """
+        Takes the evaluation result and returns a Human-Readable String Report.
+        """
+        score = result['score']
+        meta = result['metadata']
         
-        # Status Logic
         if score == 100: status = "PERFECT"
         elif score >= 80: status = "PASS"
         elif score >= 50: status = "WEAK"
         else: status = "FAIL"
 
-        # Professional Text Block (No Emojis)
-        report_text = f"""
+        # Build Details Block
+        details_txt = []
+        for item in meta.get('contradictions', []):
+            details_txt.append(f"⛔ [CONTRADICTION] {item['url']}\n    Reason: {item['reason']}")
+        
+        for item in meta.get('verified_sources', []):
+            tier = item['tier_score']
+            validity = item['validity']
+            details_txt.append(f"✅ [VERIFIED] {item['url']} (Tier {tier}, Validity {validity})\n    Context: {item['reason']}")
+            
+        for url in meta.get('hallucinations', []):
+            details_txt.append(f"❌ [MISSING] {url} (Not found in logs)")
+
+        return f"""
 SOURCE COMPLIANCE REPORT
-==================================================
-STATUS:        {status} ({score:.1f}/100)
-CITATIONS:     {data['citation_count']} present
-BEST SOURCE:   {data['best_source']}
+========================
+STATUS:      {status} ({score:.1f}/100)
+CITATIONS:   {meta.get('citation_count', 0)}
+BEST SOURCE: {meta.get('best_source', 'None')}
 
-RISK ASSESSMENT
----------------
-Hallucinations: {len(data['hallucinations'])} detected
-Contradictions: {len(data['contradictions'])} detected
+RISK LOG:
+• Hallucinations: {len(meta.get('hallucinations', []))}
+• Contradictions: {len(meta.get('contradictions', []))}
 
-AUDIT LOGS
-----------
-{chr(10).join(data['details']) if data['details'] else "No audit details available."}
+DETAILS:
+{chr(10).join(details_txt) if details_txt else "No details."}
 
-JUDGE SUMMARY
--------------
-{reason}
-==================================================
-"""
+JUDGE SUMMARY:
+{result['reason']}
+========================
+""".strip()
+
+    # --- INTERNAL HELPERS ---
+
+    def _build_output(self, score, reasons, data):
         return {
             "score": round(score, 2),
-            "reason": reason,
-            "report_text": report_text.strip(),
+            "reason": " ".join(reasons) if reasons else "Compliant",
             "metadata": data
         }
-
-    # --- Internal Helpers ---
 
     def _extract_urls(self, text):
         return re.findall(r'https?://[^\s"\'\)\]\}]+', text)
@@ -174,7 +200,6 @@ JUDGE SUMMARY
                     try: args = json.loads(args)
                     except: continue
                 
-                # Check parse_html_page
                 if tool['tool_name'] == 'parse_html_page':
                     # Fuzzy match URL
                     if url in args.get('url', '') or args.get('url', '') in url:
@@ -193,9 +218,8 @@ JUDGE SUMMARY
                             try: args = json.loads(args)
                             except: continue
                         
-                        # Did this analysis use our document?
+                        # Did this analysis use our document key?
                         if data_key in args.get('prompt', ''):
-                            # This is the "Gold" content - the agent's actual analysis
                             return tool.get('tool_output') or tool.get('result', '')
 
         # Pass 3: If we have the direct HTML content from Pass 1, return it
@@ -211,7 +235,7 @@ JUDGE SUMMARY
                         return str(output)[:5000]
 
         return None
-    
+
     def _verify_validity_llm(self, claim, source_text):
         """
         Ask LLM for a JSON response containing Score AND Reasoning.
