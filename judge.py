@@ -8,9 +8,11 @@ from openai import OpenAI
 
 # Judges
 from judges.source_judge import SourceJudge
+from judges.fact_judge import FactJudge
+from judges.efficiency_judge import EfficiencyJudge
 
 # Helpers
-from judge_utils import load_refs, load_preds, calculate_efficiency 
+from judge_utils import load_refs, load_preds 
 
 load_dotenv()
 
@@ -24,9 +26,10 @@ def main():
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
     
-    # Initialize your suite of judges
     judges = {
         "source": SourceJudge(llm_client=client),
+        "fact": FactJudge(llm_client=client),
+        "efficiency": EfficiencyJudge()
     }
 
     refs = load_refs(args.refs)
@@ -41,7 +44,6 @@ def main():
         ref = refs.get(pkey)
         if not ref: continue
 
-        # 1. Container for this question
         q_result = {
             "question_id": ref.get("question_id"),
             "question": ref["question"],
@@ -50,22 +52,26 @@ def main():
             "judges": {},
             "composite_score": 0.0
         }
-
-        # 2. Run All Judges
+        
         total_weighted_score = 0.0
         
-        weights = {"source": 0.4, "fact": 0.4, "efficiency": 0.2} 
+        weights = {"source": 0.3, "fact": 0.6, "efficiency": 0.1} 
         
-        # --- A. Source Judge ---
         s_res = judges["source"].evaluate(ref, prow)
         q_result["judges"]["source"] = s_res
         total_weighted_score += s_res["score"] * weights["source"]
-        
+
+        f_res = judges["fact"].evaluate(ref, prow)
+        q_result["judges"]["fact"] = f_res
+        total_weighted_score += f_res["score"] * weights["fact"]
+
+        e_res = judges["efficiency"].evaluate(ref, prow)
+        q_result["judges"]["efficiency"] = e_res
+        total_weighted_score += e_res["score"] * weights["efficiency"]
 
         q_result["composite_score"] = round(total_weighted_score, 2)
         full_audit_log.append(q_result)
-
-        # 3. Generate Human Report Segment
+        
         report_segment = f"""
 ##################################################
 QUESTION: {ref['question']}
@@ -75,19 +81,19 @@ SCORE:    {q_result['composite_score']}/100
 ANSWER:
 {prow['answer']}
 
+{judges['fact'].render(f_res)}
 {judges['source'].render(s_res)}
+{judges['efficiency'].render(e_res)}
 
 --------------------------------------------------
 """
         human_readable_buffer.append(report_segment)
         print(f"Processed {ref.get('question_id')}: Score {q_result['composite_score']}")
 
-    # 4. Save JSON (The "Storage" Format)
     os.makedirs(os.path.dirname(args.out_json), exist_ok=True)
     with open(args.out_json, "w", encoding="utf-8") as f:
         json.dump(full_audit_log, f, indent=2)
     
-    # 5. Save Text (The "Readable" Format)
     with open(args.out_txt, "w", encoding="utf-8") as f:
         f.write("\n".join(human_readable_buffer))
 

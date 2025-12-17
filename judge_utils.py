@@ -30,18 +30,6 @@ def heuristic_match(gt: str, pred: str) -> bool:
 
     return normalize_q(gt) in normalize_q(pred)
 
-def calculate_efficiency(actual_time, actual_tokens, expert_time_min):
-    """
-    Score from 0.0 to 1.0 based on expert baseline.
-    """
-    expert_time_sec = expert_time_min * 60
-    if expert_time_sec == 0: expert_time_sec = 300 
-
-    if actual_time <= 0: actual_time = 1.0
-
-    time_score = min(1.0, expert_time_sec / actual_time)
-    
-    return time_score
 
 def load_refs(path: str) -> Dict[str, Dict[str, Any]]:
     """Load ground truth CSV."""
