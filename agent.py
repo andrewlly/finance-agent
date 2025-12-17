@@ -96,6 +96,8 @@ class Agent(ABC):
         """
         Helper method to process tool calls, handling errors, validating arguments,
         and generating the results.
+        
+        [MODIFIED] Now captures 'tool_output' for Green Agent Evaluation.
         """
 
         tool_results: list[ToolResult] = []
@@ -112,6 +114,7 @@ class Agent(ABC):
                 "arguments": arguments,
                 "success": False,
                 "error": None,
+                "tool_output": None  # <--- NEW FIELD
             }
 
             # Validate tool_name exists
@@ -146,8 +149,9 @@ class Agent(ABC):
                 raw_tool_result = await self.tools[tool_name](
                     arguments, data_storage, self.llm
                 )
+                # ... [Existing token logic omitted for brevity, keep your original token logic here] ...
+                # (Copy the token counting logic from your original file here)
                 if "usage" in raw_tool_result:
-                    # Retrieval can use LLM tokens too, so we need to track them here
                     tool_token_usage = raw_tool_result["usage"]
                     turn_metadata["retrieval_metadata"] = {**tool_token_usage}
                     for key in TOKEN_KEYS:
@@ -168,6 +172,25 @@ class Agent(ABC):
             if raw_tool_result["success"]:
                 # Add tool result to messages
                 tool_call_metadata["success"] = True
+                
+                try:
+                    # Case 1: ParseHtmlPage (Content is hidden in data_storage)
+                    if tool_name == "parse_html_page":
+                        key = arguments.get("key")
+                        if key and key in data_storage:
+                            # Capture the actual text downloaded
+                            content = str(data_storage[key])
+                            # Truncate to 5000 chars to prevent massive log files
+                            tool_call_metadata["tool_output"] = content[:5000]
+                    
+                    # Case 2: Standard Tools (Search, Retrieve) - Content is in the result
+                    else:
+                        content = str(raw_tool_result.get("result", ""))
+                        tool_call_metadata["tool_output"] = content[:5000]
+                        
+                except Exception as capture_err:
+                    agent_logger.warning(f"Failed to capture tool output for logs: {capture_err}")
+
             else:
                 tool_call_metadata["error"] = raw_tool_result["result"]
                 errors.append(raw_tool_result["result"])
