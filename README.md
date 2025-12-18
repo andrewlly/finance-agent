@@ -30,7 +30,7 @@ We recommend creating and using a Conda environment for this. For detailed instr
 conda create -n myenv python=3.13
 ```
 
-## Running both green and white agents locally 
+## Running both green and white agents locally
 
 ```bash
 
@@ -78,7 +78,7 @@ This repository is configured for **separate deployments** of green and white ag
 
    - Set environment variable `CLOUDRUN_HOST=finance-green-production.up.railway.app`
 
-3. **Configure for White Agent using WHITE branch**:
+3. **Configure for White Agent using white branch**:
 
    - Set environment variable `CLOUDRUN_HOST=finance-white-production.up.railway.app`
 
@@ -90,28 +90,8 @@ This repository is configured for **separate deployments** of green and white ag
    SERP_API_KEY=your_serp_key
    SEC_API_KEY=your_sec_key
    HTTPS_ENABLED=true
+   AGENT_TYPE=green # set to white if using white agent
    ```
-
-5. **Deploy**: Railway will automatically deploy, remember to update the deployment if changes are made!
-
-### Configuration Files
-
-The following files are configured for Railway deployment:
-
-**Green Agent (in green branch):**
-
-- **`Procfile`**: Web process for green agent
-- **`railway-green.json`**: Railway config for green agent
-
-**White Agent (in white branch):**
-
-- **`Procfile`**: Web process for white agent
-- **`railway-white.json`**: Railway config for white agent
-
-**Shared:**
-
-- **`runtime.txt`**: Python version specification
-- **`.railwayignore`**: Files to exclude from deployment
 
 ### AgentBeats Integration
 
