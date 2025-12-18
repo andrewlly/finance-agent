@@ -72,6 +72,7 @@ class FinanceWhiteAgentExecutor(AgentExecutor):
             # Create agent if not already initialized
             PLANNING_INSTRUCTIONS = """
                 You are an elite Financial Analyst. You must plan your approach carefully before answering, then directly answer the question.
+                You must output for final answer confidence score (0-100) indicating how certain you are based on the evidence Format: 'CONFIDENCE: <score>'
 
                 1. **PLAN PHASE**:
                 - Decompose the question What specific metrics (EPS, Revenue, Debt) are needed?
