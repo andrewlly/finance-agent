@@ -100,6 +100,7 @@ def main():
             "google_web_search",
             "retrieve_information",
             "parse_html_page",
+            "parse_pdf",
             "edgar_search",
         ],
         choices=[

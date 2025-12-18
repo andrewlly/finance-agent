@@ -38,7 +38,6 @@ class ModelException(Exception):
     """
     Raised on model errors - not retried by default
     """
-
     pass
 
 
@@ -78,7 +77,7 @@ class Agent(ABC):
                 response_text,
                 re.DOTALL | re.IGNORECASE
             )
-
+            
             sources_match = re.search(r"(\{\"sources\".*\})", response_text, re.DOTALL)
 
             answer_text = (
@@ -87,6 +86,7 @@ class Agent(ABC):
 
             sources_text = sources_match.group(1) if sources_match else ""
 
+            # Reconstruct the final string (Answer + Sources)
             final_answer = answer_text
             if sources_text:
                 final_answer = f"{answer_text}\n\n{sources_text}"
@@ -97,15 +97,13 @@ class Agent(ABC):
             return final_answer, confidence
 
         return None, 0.0
-    
+
     async def _process_tool_calls(
         self, tool_calls: list[ToolCall], data_storage: dict, turn_metadata: dict
     ):
         """
         Helper method to process tool calls, handling errors, validating arguments,
         and generating the results.
-        
-        [MODIFIED] Now captures 'tool_output' for Green Agent Evaluation.
         """
 
         tool_results: list[ToolResult] = []
@@ -122,7 +120,7 @@ class Agent(ABC):
                 "arguments": arguments,
                 "success": False,
                 "error": None,
-                "tool_output": None  # <--- NEW FIELD
+                "tool_output": None 
             }
 
             # Validate tool_name exists
@@ -152,13 +150,13 @@ class Agent(ABC):
                     tool_results.append(tool_result)
                     continue
 
-            # Call tools with appropriate arguments
             if tool_name == "retrieve_information":
+                # Requires LLM and Data Storage
                 raw_tool_result = await self.tools[tool_name](
                     arguments, data_storage, self.llm
                 )
-                # ... [Existing token logic omitted for brevity, keep your original token logic here] ...
-                # (Copy the token counting logic from your original file here)
+                
+                # Token Tracking for Retrieval
                 if "usage" in raw_tool_result:
                     tool_token_usage = raw_tool_result["usage"]
                     turn_metadata["retrieval_metadata"] = {**tool_token_usage}
@@ -172,32 +170,27 @@ class Agent(ABC):
                         )
                     turn_metadata["total_cost"] += tool_token_usage["cost"]["total"]
 
-            elif tool_name == "parse_html_page":
+            elif tool_name in ["parse_html_page", "parse_pdf"]:
+                # Requires Data Storage
                 raw_tool_result = await self.tools[tool_name](arguments, data_storage)
+            
             else:
                 raw_tool_result = await self.tools[tool_name](arguments)
-
             if raw_tool_result["success"]:
-                # Add tool result to messages
                 tool_call_metadata["success"] = True
                 
                 try:
-                    # Case 1: ParseHtmlPage (Content is hidden in data_storage)
-                    if tool_name == "parse_html_page":
+                    if tool_name in ["parse_html_page", "parse_pdf"]:
                         key = arguments.get("key")
                         if key and key in data_storage:
-                            # Capture the actual text downloaded
                             content = str(data_storage[key])
-                            # Truncate to 5000 chars to prevent massive log files
-                            tool_call_metadata["tool_output"] = content[:5000]
+                            tool_call_metadata["tool_output"] = content[:10000]
                     
-                    # Case 2: Standard Tools (Search, Retrieve) - Content is in the result
                     else:
                         content = str(raw_tool_result.get("result", ""))
-                        tool_call_metadata["tool_output"] = content[:5000]
-                        
-                except Exception as capture_err:
-                    agent_logger.warning(f"Failed to capture tool output for logs: {capture_err}")
+                        tool_call_metadata["tool_output"] = content[:10000]
+                except Exception as e:
+                    agent_logger.warning(f"Failed to capture tool output: {e}")
 
             else:
                 tool_call_metadata["error"] = raw_tool_result["result"]
@@ -207,7 +200,6 @@ class Agent(ABC):
                 tool_call=tool_call, result=raw_tool_result["result"]
             )
             tool_results.append(tool_result)
-
             tool_call_metadatas.append(tool_call_metadata)
 
         turn_metadata["tool_calls"].extend(tool_call_metadatas)
@@ -216,27 +208,16 @@ class Agent(ABC):
 
     async def _process_turn(self, turn_count, data_storage):
         """
-        Process a single turn in the agent's conversation.
-
-        Args:
-            turn_count (int): The current turn number
-            data_storage (dict): Storage for conversation data
-
-        Returns:
-            tuple: (final_answer, turn_metadata, should_continue)
+        Process a single turn. Returns (final_answer, metadata, should_continue)
         """
         agent_logger.info(f"\033[1;34m[TURN {turn_count}]\033[0m")
 
         tool_definitions = [tool.get_tool_definition() for tool in self.tools.values()]
-        agent_logger.info(
-            f"\033[1;35m[TOOLS AVAILABLE]\033[0m {[tool.name for tool in tool_definitions]}"
-        )
-
+        
         try:
             response: QueryResult = await self.llm.query(
                 input=self.messages, tools=tool_definitions
             )
-        # raise these directly, rather than handling as ModelException
         except MaxContextWindowExceededError:
             raise
         except Exception as e:
@@ -250,60 +231,43 @@ class Agent(ABC):
         reasoning_text = response.reasoning
         tool_calls: list[ToolCall] = response.tool_calls
 
-        agent_logger.info(
-            f"\033[1;36m[TOOL CALLS RECEIVED]\033[0m {len(tool_calls)} tool calls: {[tc.name for tc in tool_calls]}"
-        )
+        agent_logger.info(f"\033[1;36m[TOOL CALLS]\033[0m {len(tool_calls)}: {[tc.name for tc in tool_calls]}")
 
         turn_metadata = {
             "tool_calls": [],
             "errors": [],
-            # Metadata for original LLM query for this turn
-            "query_metadata": dict_replace_none_with_zero(
-                response.metadata.model_dump()
-            ),
-            # Metadata from LLM usage by the 'retrieve_information' tool
+            "query_metadata": dict_replace_none_with_zero(response.metadata.model_dump()),
             "retrieval_metadata": defaultdict(int),
-            # Metadata from combined LLM query and tool calls for this turn
-            "combined_metadata": dict_replace_none_with_zero(
-                response.metadata.model_dump()
-            ),
+            "combined_metadata": dict_replace_none_with_zero(response.metadata.model_dump()),
             "total_cost": response.metadata.cost.total,
         }
 
-        # Log the thinking content if available
         if reasoning_text:
-            agent_logger.info(f"\033[1;33m[LLM REASONING]\033[0m {reasoning_text}")
+            agent_logger.info(f"\033[1;33m[REASONING]\033[0m {reasoning_text}")
 
         if response_text:
-            agent_logger.info(f"\033[1;33m[LLM RESPONSE]\033[0m {response_text}")
+            agent_logger.info(f"\033[1;33m[RESPONSE]\033[0m {response_text}")
 
         if tool_calls:
             tool_results = await self._process_tool_calls(
                 tool_calls, data_storage, turn_metadata
             )
             self.messages.extend(tool_results)
+            return None, turn_metadata, True
 
         else:
-            # Look for the text "FINAL ANSWER:" in the response text
-            final_answer = await self._find_final_answer(response_text)
+            final_answer, confidence = await self._find_final_answer(response_text)
 
             if final_answer:
+                turn_metadata["confidence"] = confidence
                 return final_answer, turn_metadata, False
 
         return None, turn_metadata, True
 
     async def run(self, question: str, session_id: str = None) -> tuple[str, dict]:
         """
-        Run the agent on a question from the user.
-
-        Args:
-            question (str): The user's question
-            session_id (str, optional): A unique identifier for this session
-
-        Returns:
-            tuple[str, dict]: The final answer and metadata about the run
+        Run the agent loop.
         """
-        # Initialize metadata
         session_id = session_id or str(uuid.uuid4())
         metadata = {
             "session_id": session_id,
@@ -321,25 +285,25 @@ class Agent(ABC):
             "api_calls_count": 0,
             "error_count": 0,
             "total_cost": 0,
+            "final_confidence": 0.0 # New field
         }
 
-        # Initialize data storage for this conversation
         data_storage = {}
 
-        # Prepare initial message with instructions
-        initial_prompt = self.instructions_prompt.format(question=question)
-
-        initial_message = TextInput(text=initial_prompt)
+        # Prepare initial prompt 
+        # (Assuming INSTRUCTIONS_PROMPT in utils.py handles the formatting instructions now)
+        prompt_instruction = self.instructions_prompt.format(question=question)
+        
+        initial_message = TextInput(text=prompt_instruction)
         self.messages: list[InputItem] = [initial_message]
 
-        agent_logger.info(f"\033[1;34m[USER INSTRUCTIONS]\033[0m {initial_prompt}")
+        agent_logger.info(f"\033[1;34m[USER]\033[0m {prompt_instruction}")
 
         turn_count = 0
         final_answer = None
 
         while turn_count < self.max_turns:
             turn_count += 1
-
             try:
                 result, turn_metadata, should_continue = await self._process_turn(
                     turn_count, data_storage
@@ -347,53 +311,40 @@ class Agent(ABC):
 
                 metadata["turns"].append(turn_metadata)
 
-            except MaxContextWindowExceededError:
-                agent_logger.warning(
-                    "Max Context Window Exceeded. "
-                    "Removing first model response from the stack, "
-                    "as well as all associated tool calls and results."
-                )
-                
-                # delete the first model call
-                self.messages.pop(1)
+                if not should_continue:
+                    final_answer = result
+                    # Capture final confidence if available
+                    if "confidence" in turn_metadata:
+                        metadata["final_confidence"] = turn_metadata["confidence"]
+                    break
 
-                # delete all corresponding ToolResults
+            except MaxContextWindowExceededError:
+                agent_logger.warning("Max Context Window Exceeded. Pruning history...")
+                self.messages.pop(1)
                 while len(self.messages) > 1 and isinstance(self.messages[1], ToolResult):
                     self.messages.pop(1)
-                
-                # then keep going!
                 should_continue = True
-            except ModelException as e:
-                result = f"Model exception occurred: {e}"
-                metadata["error_count"] += 1
-                agent_logger.error(result)
-                should_continue = False
 
             except Exception as e:
                 metadata["error_count"] += 1
-                agent_logger.error(f"\033[1;31m[ERROR]\033[0m {e}")
-                agent_logger.error(
-                    f"\033[1;31m[traceback]\033[0m {traceback.format_exc()}"
-                )
-
-                # Explain the error to the agent and give them a chance to recover
-                error_message = TextInput(
-                    text=f"An error occurred: {e}. Please review what happened and try a different approach."
-                )
+                agent_logger.error(f"Error: {e}")
+                error_message = TextInput(text=f"System Error: {e}. Please retry.")
                 self.messages.append(error_message)
-
                 should_continue = True
 
-            if not should_continue:
-                final_answer = result
-                break
-
         metadata["end_time"] = datetime.now().isoformat()
+        
+        # Calculate Duration
+        try:
+            start_dt = datetime.fromisoformat(metadata["start_time"])
+            end_dt = datetime.fromisoformat(metadata["end_time"])
+            metadata["total_duration_seconds"] = (end_dt - start_dt).total_seconds()
+        except:
+            pass
 
         if final_answer:
             metadata["final_answer"] = final_answer
 
-        # Merge turn-level statistics into session-level statistics
         metadata = _merge_statistics(metadata)
 
         # Save results to file
@@ -402,10 +353,4 @@ class Agent(ABC):
         with open(log_path, "w") as f:
             json.dump(metadata, f, indent=2)
 
-        if final_answer:
-            return final_answer, metadata
-        elif turn_count >= self.max_turns:
-            return "Max turns reached without final answer.", metadata
-        else:
-            # handles answers AND errors
-            return "Unable to generate answer for unknown reason", metadata
+        return (final_answer if final_answer else "Max turns reached."), metadata

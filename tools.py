@@ -2,11 +2,14 @@ import json
 import os
 import re
 import traceback
+import io
+import heapq
 from abc import ABC, abstractmethod
 
 import aiohttp
 import backoff
 from bs4 import BeautifulSoup
+from pypdf import PdfReader
 
 from model_library.base import LLM, ToolBody, ToolDefinition
 
@@ -16,6 +19,23 @@ tool_logger = get_logger(__name__)
 
 MAX_END_DATE = "2025-04-07"
 
+IMAGE_TRIGGER_PROMPT = """
+Assess if the users would be able to understand response better with the use of diagrams and trigger them. 
+You can insert a diagram by adding the 
+
+[Image of X]
+ tag where X is a contextually relevant and domain-specific query to fetch the diagram. 
+Examples: 
+
+[Image of the human digestive system]
+, 
+
+[Image of hydrogen fuel cell]
+.
+- Avoid triggering images just for visual appeal.
+- Be economical but strategic.
+- Place the image tag immediately before or after the relevant text without disrupting the flow.
+"""
 
 def is_429(exception):
     is429 = (
@@ -28,7 +48,6 @@ def is_429(exception):
     return is429
 
 
-# Define a reusable backoff decorator for 429 errors. Mainly used for the SEC and Google Search APIs.
 def retry_on_429(func):
     @backoff.on_exception(
         backoff.expo,
@@ -144,19 +163,9 @@ class GoogleWebSearch(Tool):
 
     @retry_on_429
     async def _execute_search(self, search_query: str) -> list[str]:
-        """
-        Search the web for information using Google Search.
-
-        Args:
-            search_query (str): The query to search for
-
-        Returns:
-            list[str]: A list of results from Google Search
-        """
         if not self.serpapi_api_key:
             raise ValueError("SERPAPI_API_KEY is not set")
 
-        # Google expect MM/DD/YYYY format
         max_date_parts = MAX_END_DATE.split("-")
         google_date_format = (
             f"{max_date_parts[1]}/{max_date_parts[2]}/{max_date_parts[0]}"
@@ -174,7 +183,7 @@ class GoogleWebSearch(Tool):
             async with session.get(
                 "https://serpapi.com/search.json", params=params
             ) as response:
-                response.raise_for_status()  # This will raise ClientResponseError
+                response.raise_for_status()
                 results = await response.json()
 
         return results.get("organic_results", [])
@@ -196,11 +205,11 @@ class EDGARSearch(Tool):
     input_arguments: dict = {
         "query": {
             "type": "string",
-            "description": "The keyword or phrase to search, such as 'substantial doubt' OR 'material weakness'",
+            "description": """The keyword or phrase to search, such as 'substantial doubt' OR 'material weakness'""",
         },
         "form_types": {
             "type": "array",
-            "description": "Limits search to specific SEC form types (e.g., ['8-K', '10-Q']) list of strings. Default is None (all form types)",
+            "description": """Limits search to specific SEC form types (e.g., ['8-K', '10-Q']) list of strings. Default is None (all form types)""",
             "items": {"type": "string"},
         },
         "ciks": {
@@ -261,26 +270,9 @@ class EDGARSearch(Tool):
         page: int,
         top_n_results: int,
     ) -> list[str]:
-        """
-        Search the EDGAR Database through the SEC API asynchronously.
-
-        Args:
-            query (str): The keyword or phrase to search
-            form_types (list[str]): List of form types to search
-            ciks (list[str]): List of CIKs to filter by
-            start_date (str): Start date for the search range in yyyy-mm-dd format
-            end_date (str): End date for the search range in yyyy-mm-dd format
-            page (int): Pagination for results
-            top_n_results (int): The top N results to return
-
-        Returns:
-            list[str]: A list of filing results
-        """
-
         if not self.sec_api_key:
             raise ValueError("SEC_EDGAR_API_KEY is not set")
 
-        # Parse form_types if it's a string representation of a JSON array
         if (
             isinstance(form_types, str)
             and form_types.startswith("[")
@@ -289,17 +281,14 @@ class EDGARSearch(Tool):
             try:
                 form_types = json.loads(form_types.replace("'", '"'))
             except json.JSONDecodeError:
-                # Fallback to simple parsing if JSON parsing fails
                 form_types = [
                     item.strip(" \"'") for item in form_types[1:-1].split(",")
                 ]
 
-        # Parse ciks if it's a string representation of a JSON array
         if isinstance(ciks, str) and ciks.startswith("[") and ciks.endswith("]"):
             try:
                 ciks = json.loads(ciks.replace("'", '"'))
             except json.JSONDecodeError:
-                # Fallback to simple parsing if JSON parsing fails
                 ciks = [item.strip(" \"'") for item in ciks[1:-1].split(",")]
 
         if end_date > MAX_END_DATE:
@@ -310,7 +299,7 @@ class EDGARSearch(Tool):
             "formTypes": form_types,
             "ciks": ciks,
             "startDate": start_date,
-            "endDate": end_date,  # This will always be at most "2025-04-07"
+            "endDate": end_date,
             "page": page,
         }
 
@@ -323,7 +312,7 @@ class EDGARSearch(Tool):
             async with session.post(
                 self.sec_api_url, json=payload, headers=headers
             ) as response:
-                response.raise_for_status()  # This will raise ClientResponseError
+                response.raise_for_status()
                 result = await response.json()
 
         return result.get("filings", [])[: int(top_n_results)]
@@ -356,13 +345,13 @@ class ParseHtmlPage(Tool):
         "url": {"type": "string", "description": "The URL of the HTML page to parse"},
         "key": {
             "type": "string",
-            "description": "The key to use when saving the result in the conversation's data structure (dict).",
+            "description": """The key to use when saving the result in the conversation's data structure (dict).""",
         },
     }
     required_arguments: list[str] = ["url", "key"]
 
     def __init__(
-        self, headers: dict = {"User-Agent": "ValsAI/antoine@vals.ai"}, *args, **kwargs
+        self, headers: dict = {"User-Agent": "ValsAI/finance-agent"}, *args, **kwargs
     ):
         super().__init__(
             *args,
@@ -372,43 +361,30 @@ class ParseHtmlPage(Tool):
 
     @retry_on_429
     async def _parse_html_page(self, url: str) -> str:
-        """
-        Helper method to parse an HTML page and extract its text content.
-
-        Args:
-            url (str): The URL of the HTML page to parse
-
-        Returns:
-            str: The parsed text content
-        """
         async with aiohttp.ClientSession() as session:
             try:
                 async with session.get(
                     url, headers=self.headers, timeout=60
                 ) as response:
-                    response.raise_for_status()
-                    html_content = await response.text()
+                    try:
+                        html_content = await response.text()
+                    except UnicodeDecodeError:
+                        raw_content = await response.read()
+                        html_content = raw_content.decode('utf-8', errors='ignore')
+                    
             except Exception as e:
                 if len(str(e)) == 0:
                     raise TimeoutError(
-                        "Timeout error when parsing HTML page after 60 seconds. The URL might be blocked or the server is taking too long to respond."
+                        "Timeout error when parsing HTML page after 60 seconds."
                     )
                 else:
-                    is_verbose = os.environ.get("EDGAR_AGENT_VERBOSE", "0") == "1"
-                    if is_verbose:
-                        raise Exception(
-                            str(e) + "\nTraceback: " + traceback.format_exc()
-                        )
-                    else:
-                        raise Exception(str(e))
+                    raise Exception(str(e))
 
         soup = BeautifulSoup(html_content, "html.parser")
 
-        # Remove script and style elements
         for script_or_style in soup(["script", "style"]):
             script_or_style.extract()
 
-        # Get text
         text = soup.get_text()
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
@@ -419,22 +395,14 @@ class ParseHtmlPage(Tool):
     async def _save_tool_output(
         self, output: list[str], key: str, data_storage: dict
     ) -> None:
-        """
-        Save the parsed HTML text to the data_storage dictionary.
-
-        Args:
-            output (list[str]): The parsed text output from call_tool
-            data_storage (dict): The dictionary to save the results to
-        """
         if not output:
             return
 
         tool_result = ""
         if key in data_storage:
-            tool_result = "WARNING: The key already exists in the data storage. The new result overwrites the old one.\n"
+            tool_result = "WARNING: Key exists. Overwriting.\n"
         tool_result += (
-            f"SUCCESS: The result has been saved to the data storage under the key: {key}."
-            + "\n"
+            f"SUCCESS: Saved to data storage under key: {key}.\n"
         )
 
         data_storage[key] = output
@@ -442,7 +410,7 @@ class ParseHtmlPage(Tool):
         keys_list = "\n".join(data_storage.keys())
         tool_result += (
             f"""
-        The data_storage currently contains the following keys:
+        Data storage keys:
         {keys_list}
         """.strip()
             + "\n"
@@ -451,15 +419,6 @@ class ParseHtmlPage(Tool):
         return tool_result
 
     async def call_tool(self, arguments: dict, data_storage: dict) -> list[str]:
-        """
-        Parse an HTML page and return its text content.
-
-        Args:
-            arguments (dict): Dictionary containing 'url' and 'key'
-
-        Returns:
-            list[str]: A list containing the parsed text
-        """
         url = arguments.get("url")
         key = arguments.get("key")
         text_output = await self._parse_html_page(url)
@@ -467,36 +426,107 @@ class ParseHtmlPage(Tool):
 
         return tool_result
 
+class ParsePDF(Tool):
+    name: str = "parse_pdf"
+    description: str = (
+        """
+        Parse a PDF file from a URL. This tool downloads the PDF and extracts its text content.
+        Use this tool when the URL ends in .pdf or when 'parse_html_page' fails due to binary encoding errors.
+        You should provide both the URL of the PDF and the key to save the result.
+        """
+    )
+
+    input_arguments: dict = {
+        "url": {"type": "string", "description": "The URL of the PDF file to parse"},
+        "key": {
+            "type": "string",
+            "description": """The key to use when saving the result in the conversation's data storage.""",
+        },
+    }
+    required_arguments: list[str] = ["url", "key"]
+
+    def __init__(
+        self, headers: dict = {"User-Agent": "ValsAI/finance-agent"}, *args, **kwargs
+    ):
+        super().__init__(*args, **kwargs)
+        self.headers = headers
+
+    @retry_on_429
+    async def _parse_pdf(self, url: str) -> str:
+        async with aiohttp.ClientSession() as session:
+            try:
+                async with session.get(
+                    url, headers=self.headers, timeout=60
+                ) as response:
+                    response.raise_for_status()
+                    pdf_bytes = await response.read()
+            except Exception as e:
+                raise Exception(f"Failed to download PDF: {e}")
+
+        try:
+            reader = PdfReader(io.BytesIO(pdf_bytes))
+            text_content = []
+            
+            for i, page in enumerate(reader.pages):
+                page_text = page.extract_text()
+                if page_text:
+                    text_content.append(f"--- Page {i+1} ---\n{page_text}")
+            
+            full_text = "\n".join(text_content)
+            
+            return full_text if full_text.strip() else "PDF downloaded but contains no extractable text."
+            
+        except Exception as e:
+            raise Exception(f"Failed to parse PDF content: {e}")
+
+    async def _save_tool_output(self, output: str, key: str, data_storage: dict) -> str:
+        if not output: return "No output to save."
+        
+        msg = f"SUCCESS: PDF content saved under key: {key}."
+        if key in data_storage:
+            msg = "WARNING: Key exists. Overwriting.\n" + msg
+            
+        data_storage[key] = output
+        return msg
+
+    async def call_tool(self, arguments: dict, data_storage: dict) -> list[str]:
+        url = arguments.get("url")
+        key = arguments.get("key")
+        
+        if not url.lower().endswith(".pdf") and "pdf" not in url.lower():
+            tool_logger.warning(f"URL {url} does not look like a PDF, but attempting parse anyway.")
+
+        text_output = await self._parse_pdf(url)
+        result_msg = await self._save_tool_output(text_output, key, data_storage)
+        return result_msg
+
 
 class RetrieveInformation(Tool):
     name: str = "retrieve_information"
     description: str = (
         """
-    Retrieve information from the conversation's data structure (dict) and allow character range extraction.
+    Retrieve information from the conversation's data structure (dict) and analyze it.
     
-    IMPORTANT: Your prompt MUST include at least one key from the data storage using the exact format: {{key_name}}
+    IMPORTANT: 
+    1. Your prompt MUST include at least one key from data storage: {{key_name}}.
+    2. You can specify character ranges to read only specific parts.
+    3. You can request DIAGRAMS. If you see complex concepts (systems, flows, structures) in the text, 
+       insert 
+
+[Image of X]
+ tags in your output where helpful.
     
-    For example, if you want to analyze data stored under the key "financial_report", your prompt should look like:
-    "Analyze the following financial report and extract the revenue figures: {{financial_report}}"
-    
-    The {{key_name}} will be replaced with the actual content stored under that key before being sent to the LLM.
-    If you don't use this exact format with double braces, the tool will fail to retrieve the information.
-    
-    You can optionally specify character ranges for each document key to extract only portions of documents. That can be useful to avoid token limit errors or improve efficiency by selecting only part of the document.
-    For example, if "financial_report" contains "Annual Report 2023" and you specify a range [1, 5] for that key,
-    only "nnual" will be inserted into the prompt.
-    
-    The output is the result from the LLM that receives the prompt with the inserted data.
+    Output is the result from the LLM analysis.
     """.strip()
     )
     input_arguments: dict = {
         "prompt": {
             "type": "string",
-            "description": "The prompt that will be passed to the LLM. You MUST include at least one data storage key in the format {{key_name}} - for example: 'Summarize this 10-K filing: {{company_10k}}'. The content stored under each key will replace the {{key_name}} placeholder.",
+            "description": """The prompt passed to the LLM. Must include {{key_name}}. Ask the LLM to explain concepts and optionally include  tags if useful.""",
         },
         "input_character_ranges": {
             "type": "object",
-            "description": "A dictionary mapping document keys to their character ranges. Each range should be an array where the first element is the start index and the second element is the end index. Can be used to only read portions of documents. By default, the full document is used. To use the full document, set the range to an empty list [].",
+            "description": "Map keys to [start, end] ranges. Default is full text.",
             "additionalProperties": {
                 "type": "array",
                 "items": {
@@ -513,6 +543,44 @@ class RetrieveInformation(Tool):
             **kwargs,
         )
 
+    def _filter_content(self, content: str, query: str, max_chunks: int = 5) -> str:
+        """
+        Local Relevance Search:
+        Splits a large document into chunks and returns only the chunks 
+        most relevant to the query prompt.
+        """
+        if "--- Page" in content:
+            chunks = content.split("--- Page")
+            chunks = [f"--- Page{c}" for c in chunks if c.strip()]
+        else:
+            chunks = content.split("\n\n")
+
+        stop_words = {"the", "a", "an", "in", "on", "at", "for", "to", "of", "and", "is", "are", "extract", "find", "summarize", "from", "document"}
+        query_words = set(word.lower() for word in query.split() if word.lower() not in stop_words and len(word) > 2)
+
+        if not query_words:
+            return content[:20000] + "\n...[TRUNCATED]..."
+
+        scored_chunks = []
+        for i, chunk in enumerate(chunks):
+            score = sum(1 for word in query_words if word in chunk.lower())
+            
+            if "revenue" in query.lower() and "revenue" in chunk.lower(): score += 2
+            if "table" in chunk.lower(): score += 0.5
+
+            scored_chunks.append((score, i, chunk))
+
+        scored_chunks.sort(key=lambda x: x[0], reverse=True)
+        top_chunks = scored_chunks[:max_chunks]
+        
+        top_chunks.sort(key=lambda x: x[1])
+        
+        filtered_text = "\n\n... [Skipped Irrelevant Sections] ...\n\n".join([c[2] for c in top_chunks])
+        
+        tool_logger.info(f"Smart Filter: Reduced document from {len(content)} chars to {len(filtered_text)} chars using keywords: {query_words}")
+        
+        return filtered_text
+
     async def call_tool(
         self, arguments: dict, data_storage: dict, model: LLM, *args, **kwargs
     ) -> list[str]:
@@ -521,53 +589,46 @@ class RetrieveInformation(Tool):
         if input_character_ranges is None:
             input_character_ranges = {}
 
-        # Verify that the prompt contains at least one placeholder in the correct format
         if not re.search(r"{{[^{}]+}}", prompt):
             raise ValueError(
-                "ERROR: Your prompt must include at least one key from data storage in the format {{key_name}}. Please try again with the correct format."
+                "ERROR: Prompt must include {{key_name}} from data storage."
             )
 
-        # Find all keys in the prompt
         keys = re.findall(r"{{([^{}]+)}}", prompt)
         formatted_data = {}
 
-        # Apply character range to each document before substitution
         for key in keys:
             if key not in data_storage:
                 raise KeyError(
-                    f"ERROR: The key '{key}' was not found in the data storage. Available keys are: {', '.join(data_storage.keys())}"
+                    f"ERROR: Key '{key}' not found. Available: {', '.join(data_storage.keys())}"
                 )
 
-            # Extract the specified character range from the document if provided
-            doc_content = data_storage[key]
+            doc_content = str(data_storage[key])
+
+            if len(doc_content) > 20000 and key not in input_character_ranges:
+                doc_content = self._filter_content(doc_content, prompt)
 
             if key in input_character_ranges:
                 char_range = input_character_ranges[key]
-                if len(char_range) == 0:
-                    formatted_data[key] = doc_content
-                elif len(char_range) != 2:
-                    raise ValueError(
-                        f"ERROR: The character range for key '{key}' must be an list with two elements or an empty list. Please try again with the correct format."
-                    )
-                else:
+                if len(char_range) == 2:
                     start_idx = int(char_range[0])
                     end_idx = int(char_range[1])
                     formatted_data[key] = doc_content[start_idx:end_idx]
+                else:
+                    formatted_data[key] = doc_content
             else:
-                # Use the full document if no range is specified
                 formatted_data[key] = doc_content
 
-        # Convert {{key}} format to Python string formatting
         formatted_prompt = re.sub(r"{{([^{}]+)}}", r"{\1}", prompt)
-
+        
         try:
-            prompt = formatted_prompt.format(**formatted_data)
+            final_prompt = formatted_prompt.format(**formatted_data)
         except KeyError as e:
-            raise KeyError(
-                f"ERROR: The key {str(e)} was not found in the data storage. Available keys are: {', '.join(data_storage.keys())}"
-            )
+            raise KeyError(f"Key error during formatting: {str(e)}")
 
-        response = await model.query(prompt)
+        final_prompt_with_images = f"{IMAGE_TRIGGER_PROMPT}\n\n{final_prompt}"
+
+        response = await model.query(final_prompt_with_images)
 
         return {
             "retrieval": response.output_text_str,
