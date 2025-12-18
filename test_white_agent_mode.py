@@ -46,6 +46,7 @@ async def test_white_agent_mode(
 
     # Prepare message with white agent URL
     question = "What is Apple's current stock price?"
+    # question = "What was the non-GAAP operating margin for XYLO Corp in Q3 2024, and how does it compare to their midpoint guidance?"
 
     message = f"""<white_agent_url>
 {white_agent_url}

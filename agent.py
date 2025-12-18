@@ -214,6 +214,18 @@ class Agent(ABC):
             # Get text response when there are no tool calls
             response_text = self.llm.parse_response(response)
 
+            # checking if there is ticker not found or delisted signals in the response
+            trap_signals = ["TICKER_NOT_FOUND", "CONFIRMED_DELISTED", "FALSE_PREMISE"]
+            
+            if isinstance(response_text, str) and any(sig in response_text.upper() for sig in trap_signals):
+                 final_answer = f"FINAL ANSWER: This request cannot be fulfilled because the ticker/entity was confirmed to be non-existent or delisted.\n\nCONFIDENCE: 100"
+                 
+                 agent_logger.warning(f"\033[1;31m[TRAP DETECTED]\033[0m Early exit triggered: {response_text[:100]}")
+                 
+                 turn_end_time = datetime.now()
+                 turn_metadata["end_time"] = turn_end_time.isoformat()
+                 turn_metadata["duration_seconds"] = (turn_end_time - turn_start_time).total_seconds()
+                 return final_answer, turn_metadata, False
             # Use regex to check for "FINAL ANSWER:" pattern
             final_answer_pattern = re.compile(r"FINAL ANSWER:", re.IGNORECASE)
 
@@ -253,6 +265,7 @@ class Agent(ABC):
 
                 return final_answer, turn_metadata, False
             else:
+
                 agent_logger.info(f"\033[1;33m[LLM THINKING]\033[0m {response_text}")
 
         # Finalize turn metadata
@@ -325,38 +338,12 @@ class Agent(ABC):
                 messages, turn_count, data_storage, metadata
             )
 
-            if result:
-                last_msg = messages[-1]
-                last_content = str(last_msg.get("content", ""))
-                score_match = re.search(r"CONFIDENCE:\s*(\d+)", last_content, re.IGNORECASE)
-                confidence = int(score_match.group(1)) if score_match else 0
-                
-                if confidence < 75 and turn_count < (self.max_turns - 1):
-                    agent_logger.warning(f"Confidence {confidence} too low for Final Answer.")
-                    
-                    # continue the loop
-                    should_continue = True 
-                    
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            f"I cannot accept this FINAL ANSWER because the confidence ({confidence}) is too low. "
-                            "You likely hit a 403/400 error or have unverified data. "
-                            "Identify the missing link, pivot to a new tool (like EDGAR), and try again. "
-                            "Do not stop until you reach a confidence of 85+."
-                        )
-                    })
-                    
-                    final_answer = None
-                else:
-                    final_answer = result
-                    should_continue = False
-
             # Add turn metadata to session metadata
             metadata["turns"].append(turn_metadata)
 
             # Check if we should continue or if we have a final answer
             if not should_continue:
+                final_answer = result
                 break
 
         # Finalize session metadata
