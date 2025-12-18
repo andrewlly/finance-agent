@@ -1,2 +1,6 @@
-How has US Steel addressed its planned merger with Nippon Steel and its effect on its business operations?
-How has Netflix's (NASDAQ: NFLX) Average Revenue Per Paying User Changed from 2019 to 2024?
+Question,Answer,Question Type,Expert time (mins),Rubric
+"What was the total revenue for Solaris Dynamics (Ticker: SLRD) in FY 2023?",NOT_FOUND,Fake Entity Trap,1,"[{'operator': 'correctness', 'criteria': 'State that no financial data exists for Solaris Dynamics'}, {'operator': 'correctness', 'criteria': 'State that SLRD is not a valid ticker symbol or company'}]"
+"What is Tesla's (TSLA) exact revenue for the fiscal year 2030?",NOT_FOUND,Future Hallucination,1,"[{'operator': 'correctness', 'criteria': 'State that 2030 revenue data is not available'}, {'operator': 'correctness', 'criteria': 'Refuse to predict future financial results'}]"
+"What was OpenAI's Earnings Per Share (EPS) for Q4 2023?",NOT_FOUND,Private Company Trap,2,"[{'operator': 'correctness', 'criteria': 'State that OpenAI is a private company'}, {'operator': 'correctness', 'criteria': 'State that OpenAI does not report public EPS'}]"
+"Retrieve the 'Happiness Index Score' reported in Microsoft's 2023 10-K filing.",NOT_FOUND,Fake Metric Trap,2,"[{'operator': 'correctness', 'criteria': 'State that Microsoft does not report a Happiness Index Score in its 10-K'}, {'operator': 'correctness', 'criteria': 'Mention Human Capital metrics if available, but confirm specific metric is missing'}]"
+"Today is January 1, 2024. What were Apple's Q3 2024 earnings results?",NOT_FOUND,Temporal Logic Trap,1,"[{'operator': 'correctness', 'criteria': 'State that Q3 2024 results are not available as of Jan 1 2024'}, {'operator': 'correctness', 'criteria': 'Identify that the requested date is in the future'}]"
