@@ -325,12 +325,38 @@ class Agent(ABC):
                 messages, turn_count, data_storage, metadata
             )
 
+            if result:
+                last_msg = messages[-1]
+                last_content = str(last_msg.get("content", ""))
+                score_match = re.search(r"CONFIDENCE:\s*(\d+)", last_content, re.IGNORECASE)
+                confidence = int(score_match.group(1)) if score_match else 0
+                
+                if confidence < 75 and turn_count < (self.max_turns - 1):
+                    agent_logger.warning(f"Confidence {confidence} too low for Final Answer.")
+                    
+                    # continue the loop
+                    should_continue = True 
+                    
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            f"I cannot accept this FINAL ANSWER because the confidence ({confidence}) is too low. "
+                            "You likely hit a 403/400 error or have unverified data. "
+                            "Identify the missing link, pivot to a new tool (like EDGAR), and try again. "
+                            "Do not stop until you reach a confidence of 85+."
+                        )
+                    })
+                    
+                    final_answer = None
+                else:
+                    final_answer = result
+                    should_continue = False
+
             # Add turn metadata to session metadata
             metadata["turns"].append(turn_metadata)
 
             # Check if we should continue or if we have a final answer
             if not should_continue:
-                final_answer = result
                 break
 
         # Finalize session metadata

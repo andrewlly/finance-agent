@@ -70,6 +70,18 @@ class FinanceWhiteAgentExecutor(AgentExecutor):
             print(f"White agent: Received question: {user_input}")
 
             # Create agent if not already initialized
+            PLANNING_INSTRUCTIONS = """
+                You are an elite Financial Analyst. You must plan your approach carefully before answering, then directly answer the question.
+                You must output for final answer confidence score (0-100) indicating how certain you are based on the evidence Format: 'CONFIDENCE: <score>'
+
+                1. **PLAN PHASE**:
+                - Decompose the question What specific metrics (EPS, Revenue, Debt) are needed?
+                - Plan the exact queries to use the tools to get this data (with enough detail).
+                2. **EXECUTION PHASE**:
+                - Resilience: If a URL returns a 403 Forbidden, do not retry it. Immediately pivot to the alternative source.
+                3. **VERIFY PHASE**:
+                - Check your math. Cross-reference and cross-validate data from multiple sources.
+                """
             if self.agent is None:
                 print(f"White agent: Initializing with model {self.model_name}")
                 self.agent = await get_agent(
@@ -79,6 +91,7 @@ class FinanceWhiteAgentExecutor(AgentExecutor):
                         "tools": self.tools,
                         "max_output_tokens": 16384,
                         "temperature": 0.0,
+                        "system_prompt": PLANNING_INSTRUCTIONS,
                     },
                 )
 

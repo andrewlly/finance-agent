@@ -3,7 +3,7 @@ import traceback
 from agent import Agent
 from llm import GeneralLLM
 from tools import EDGARSearch, GoogleWebSearch, ParseHtmlPage, RetrieveInformation
-
+from utils import INSTRUCTIONS_PROMPT
 
 async def get_agent(model_name: str, parameters: dict, *args, **kwargs):
     max_turns = parameters.get("max_turns", 50)
@@ -13,6 +13,8 @@ async def get_agent(model_name: str, parameters: dict, *args, **kwargs):
         "parse_html_page": ParseHtmlPage,
         "edgar_search": EDGARSearch,
     }
+    
+    custom_instructions = parameters.get("system_prompt", "") + INSTRUCTIONS_PROMPT
 
     selected_tools = {}
     for tool in parameters.get("tools", available_tools.keys()):
@@ -30,6 +32,6 @@ async def get_agent(model_name: str, parameters: dict, *args, **kwargs):
         temperature=parameters.get("temperature", 0.0),
     )
 
-    agent = Agent(llm=llm, tools=selected_tools, max_turns=max_turns)
+    agent = Agent(llm=llm, tools=selected_tools, max_turns=max_turns, instructions_prompt=custom_instructions)
 
     return agent
