@@ -26,7 +26,25 @@ pip install -r requirements.txt
 
 We recommend creating and using a Conda environment for this. For detailed instructions on managing Conda environments, see the [official Conda documentation](https://docs.conda.io/projects/conda/en/stable/user-guide/tasks/manage-environments.html).
 
-## Environment Setup
+```
+conda create -n myenv python=3.13
+```
+
+## Running both green and white agents locally 
+
+```bash
+
+# Start green agent
+python start_green_agent.py --mode white_agent --port 9001
+
+# Start white agent
+python start_white_agent.py --port 9002
+
+# Test both agents
+python test_white_agent_mode.py
+```
+
+## Environment Setup for Local Deployment
 
 Create a `.env` file with the necessary API keys:
 
@@ -35,85 +53,69 @@ Create a `.env` file with the necessary API keys:
 # Note: It's only necessary to set the API keys for the models you plan on using
 OPENAI_API_KEY=your_openai_key
 ANTHROPIC_API_KEY=your_anthropic_key
-GOOGLE_API_KEY=your_google_key
-MISTRAL_API_KEY=your_mistral_key
-TOGETHER_API_KEY=your_together_api_key
-FIREWORKS_API_KEY=your_fireworks_api_key
-XAI_API_KEY=your_grok_api_key
-COHERE_API_KEY=cohere_api_key
-
 # Tool API Keys
-SERPAPI_API_KEY=your_serpapi_key
-SEC_EDGAR_API_KEY=your_sec_api_key
+
+SERP_API_KEY=your_serpapi_key
+SEC_API_KEY=your_sec_api_key
 ```
 
 You can create a SERP API key [here](https://serpapi.com/), and an SEC API key [here](https://sec-api.io/).
 
-## Running the Agent
 
-To experiment with the agent, you can run the following command:
+## Railway Deployment for AgentBeats Integration
 
-```bash
-python run_agent.py --questions "What was Apple's revenue in 2023?"
-```
+This repository is configured for **separate deployments** of green and white agents on Railway to integrate with AgentBeats.
 
-You can specify multiple questions at once:
+### Quick Deployment
 
-```bash
-python run_agent.py --questions "What was Apple's revenue in 2023?" "What was NFLX's revenue in 2024?"
-```
+1. **Connect Repository to Railway**:
 
-To specify a specific model, use the `--model` flag:
+   - Go to [Railway Dashboard](https://railway.app/dashboard)
+   - Click "New Project" → "Deploy from GitHub repo"
+   - Select your repository
 
-```bash
-python run_agent.py --questions "What was Apple's revenue in 2023?" --model openai/gpt-4o
-```
+2. **Configure for Green Agent using green branch**:
 
-You can also specify a list of questions in a text file, one question per line, with the following command:
+   - Set environment variable `CLOUDRUN_HOST=finance-green-production.up.railway.app`
 
-```bash
-python run_agent.py --question-file data/public.txt
-```
+3. **Configure for White Agent using WHITE branch**:
 
-For a full list of parameters, please run:
+   - Set environment variable `CLOUDRUN_HOST=finance-white-production.up.railway.app`
 
-```bash
-python run_agent.py --help
-```
+4. **Set Environment Variables for both**:
 
-The default configuration is the one we used to run the benchmark.
+   ```
+   OPENAI_API_KEY=your_openai_key
+   ANTHROPIC_API_KEY=your_anthropic_key
+   SERP_API_KEY=your_serp_key
+   SEC_API_KEY=your_sec_key
+   HTTPS_ENABLED=true
+   ```
 
-## Available Tools
+5. **Deploy**: Railway will automatically deploy, remember to update the deployment if changes are made!
 
-- `google_web_search`: Search the web for information
-- `edgar_search`: Search the SEC's EDGAR database for filings
-- `parse_html_page`: Parse and extract content from web pages
-- `retrieve_information`: Access stored information from previous steps
+### Configuration Files
 
-## Available Models
+The following files are configured for Railway deployment:
 
-The harness use's the Vals [Model Library](https://github.com/vals-ai/model-library), an open-source repository that allows you to call models in a unified manner.
+**Green Agent (in green branch):**
 
-Generally, any model that is in the Vals Model Library (and that supports tool calling) can be used by the agent. Here are a few commonly used models:
+- **`Procfile`**: Web process for green agent
+- **`railway-green.json`**: Railway config for green agent
 
-```
-openai/gpt-5.1-2025-11-13
-anthropic/claude-sonnet-4-5-20250929-thinking
-google/gemini-2.5-pro
-grok/grok-4-fast-reasoning
-cohere/command-a-03-2025
-zai/glm-4.6
-kimi/kimi-k2-thinking
-fireworks/glm-4p6
-```
+**White Agent (in white branch):**
 
-Full documentation is available in the model library repo. You can find the full list of models [here](https://github.com/vals-ai/model-library/blob/main/model_library/config/all_models.json).
+- **`Procfile`**: Web process for white agent
+- **`railway-white.json`**: Railway config for white agent
 
-## Logs and Output
+**Shared:**
 
-The agent writes detailed logs to the `logs` directory, including:
+- **`runtime.txt`**: Python version specification
+- **`.railwayignore`**: Files to exclude from deployment
 
-- Session-specific logs with timestamps
-- Tool usage statistics
-- Token usage
-- Error tracking
+### AgentBeats Integration
+
+Once deployed on Railway:
+
+- **Green Agent URL**: `https://finance-green-production.up.railway.app`
+- **White Agent URL**: `https://finance-white-production.up.railway.app`
