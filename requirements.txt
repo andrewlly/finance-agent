@@ -1,6 +1,6 @@
 # A2A SDK for agent communication
 a2a-sdk==0.3.19
-pypdf
+pypdf==6.4.2
 
 # LLM clients
 model-library>=0.1.3
