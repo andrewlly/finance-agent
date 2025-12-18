@@ -45,7 +45,7 @@ async def test_white_agent_mode(
     print("\n✅ Both agents ready!\n")
 
     # Prepare message with white agent URL
-    question = "What is Apple's current stock price?"
+    question = "How has Netflix's (NASDAQ: NFLX) Average Revenue Per Paying User Changed from 2019 to 2024?"
     # question = "What was the non-GAAP operating margin for XYLO Corp in Q3 2024, and how does it compare to their midpoint guidance?"
 
     message = f"""<white_agent_url>

@@ -45,10 +45,20 @@ async def wait_agent_ready(url, timeout=10):
 
 
 async def send_message(
-    url, message, task_id=None, context_id=None
+    url, message, task_id=None, context_id=None, timeout=600.0
 ) -> SendMessageResponse:
+    """
+    Send a message to an A2A agent.
+    
+    Args:
+        url: Agent URL
+        message: Message text
+        task_id: Optional task ID
+        context_id: Optional context ID  
+        timeout: Request timeout in seconds (default: 600s / 10 minutes)
+    """
     card = await get_agent_card(url)
-    httpx_client = httpx.AsyncClient(timeout=120.0)
+    httpx_client = httpx.AsyncClient(timeout=timeout)
     client = A2AClient(httpx_client=httpx_client, agent_card=card)
 
     message_id = uuid.uuid4().hex
