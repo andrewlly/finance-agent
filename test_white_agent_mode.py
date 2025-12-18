@@ -11,8 +11,8 @@ from my_util.my_a2a import send_message, wait_agent_ready
 
 
 async def test_white_agent_mode(
-    green_agent_url: str = "http://localhost:9001",
-    white_agent_url: str = "http://localhost:9002"
+    green_agent_url: str = "http://127.0.0.1:9001",
+    white_agent_url: str = "http://127.0.0.1:9002"
 ):
     """
     Test green agent testing a white agent.

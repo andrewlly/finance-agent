@@ -634,3 +634,28 @@ class RetrieveInformation(Tool):
             "retrieval": response.output_text_str,
             "usage": {**response.metadata.model_dump()},
         }
+        
+def get_tool_by_name(tool_name: str):
+    """
+    Factory function to initialize tools by name.
+    Used by the Green Agent to load tools from configuration.
+    """
+    # Normalize string
+    name = tool_name.lower().strip()
+    
+    # Map strings to your actual Tool classes
+    # NOTE: Ensure these class names match what is defined above in this file!
+    if name == "google_web_search":
+        return GoogleWebSearch() 
+    elif name == "retrieve_information":
+        return RetrieveInformation()
+    elif name == "parse_html_page":
+        return ParseHTMLPage()
+    elif name == "parse_pdf":
+        return ParsePDF()
+    elif name == "edgar_search":
+        return EdgarSearch()
+    else:
+        # Fallback or error
+        print(f"Warning: Tool '{name}' not found in get_tool_by_name registry.")
+        raise ValueError(f"Unknown tool: {name}")

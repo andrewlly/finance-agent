@@ -2,7 +2,7 @@
 
 import multiprocessing
 import json
-from green_agent.agent import start_finance_agent
+from green_agent.green_agent import start_finance_agent
 from white_agent.agent import start_white_agent
 from my_util import my_a2a
 
