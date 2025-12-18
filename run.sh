@@ -1,10 +1,30 @@
 #!/bin/bash
 # AgentBeats controller launch script
-# This script is called by the AgentBeats controller to start the agent
-# The controller sets HOST and AGENT_PORT environment variables
+# Expects AGENT_TYPE, HOST, AGENT_PORT
 
-# Change to script directory (project root)
+set -e
+
 cd "$(dirname "$0")"
 
-python start_green_agent.py --host ${HOST:-0.0.0.0} --port ${AGENT_PORT:-9001} --mode white_agent
+HOST=${HOST:-0.0.0.0}
 
+case "${AGENT_TYPE}" in
+  green)
+    PORT=${AGENT_PORT:-9001}
+    exec python start_green_agent.py \
+      --host "$HOST" \
+      --port "$PORT" \
+      --mode white_agent
+    ;;
+  white)
+    PORT=${AGENT_PORT:-9002}
+    exec python start_white_agent.py \
+      --host "$HOST" \
+      --port "$PORT"
+    ;;
+  *)
+    echo "Error: unknown AGENT_TYPE='${AGENT_TYPE}'"
+    echo "Expected: green | white"
+    exit 1
+    ;;
+esac
