@@ -8,7 +8,7 @@ import time
 import tomllib
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import dotenv
 import uvicorn
@@ -22,11 +22,251 @@ from a2a.utils import get_text_parts, new_agent_text_message
 from get_agent import get_agent
 from my_util import my_a2a, parse_tags
 
+# Import judge functions (legacy for simple judging)
+from judge import (
+    load_refs,
+    extract_final_answer,
+    heuristic_match,
+    call_openai_judge,
+    calculate_efficiency,
+    check_attribution,
+    normalize_q,
+)
+
+# Import multi-judge system
+from judges import FactJudge, SourceJudge, EfficiencyJudge, RefusalJudge, CalibrationJudge
+
+try:
+    from openai import OpenAI
+    _OPENAI_OK = True
+except ImportError:
+    _OPENAI_OK = False
+
 dotenv.load_dotenv()
 
 
 # Cache for questions loaded from CSV
 _questions_cache: List[str] = None
+# Cache for ground truth references
+_refs_cache: Dict[str, Dict[str, Any]] = None
+
+
+def load_ground_truth(csv_path: str = None) -> Dict[str, Dict[str, Any]]:
+    """
+    Load ground truth references from public.csv for judging.
+    
+    Args:
+        csv_path: Path to the CSV file. If None, uses data/public.csv relative to project root.
+    
+    Returns:
+        Dict of references keyed by normalized question text.
+    """
+    global _refs_cache
+    
+    if _refs_cache is not None:
+        return _refs_cache
+    
+    if csv_path is None:
+        project_root = Path(__file__).parent.parent
+        csv_path = str(project_root / "data" / "public.csv")
+    
+    try:
+        _refs_cache = load_refs(csv_path)
+        print(f"@@@ Loaded {len(_refs_cache)} ground truth references for judging")
+        return _refs_cache
+    except Exception as e:
+        print(f"@@@ ERROR loading ground truth: {e}")
+        return {}
+
+
+def judge_response(
+    question: str,
+    response: str,
+    duration_seconds: float = 0.0,
+    total_tokens: int = 0,
+    total_cost: float = 0.0,
+    agent_logs: Dict[str, Any] = None,
+    use_multi_judge: bool = True,
+    csv_path: str = None,
+) -> Dict[str, Any]:
+    """
+    Judge a single response against ground truth using the multi-judge system.
+    
+    Args:
+        question: The question that was asked
+        response: The agent's response (raw, including FINAL ANSWER prefix)
+        duration_seconds: How long the agent took
+        total_tokens: Total tokens used
+        total_cost: Total cost in dollars
+        agent_logs: Full agent logs/metadata for source verification
+        use_multi_judge: If True, uses full multi-judge system; if False, uses simple heuristics
+        csv_path: Path to ground truth CSV
+    
+    Returns:
+        Dict with comprehensive judging results from all judges
+    """
+    refs = load_ground_truth(csv_path)
+    
+    # Find matching reference by normalized question
+    q_normalized = normalize_q(question)
+    ref = None
+    
+    for key, r in refs.items():
+        if normalize_q(r.get("question", "")) == q_normalized:
+            ref = r
+            break
+    
+    if not ref:
+        return {
+            "correct": False,
+            "composite_score": 0.0,
+            "pipeline": "not_found",
+            "explanation": "No matching ground truth question found",
+            "judges": {},
+            "gt_answer": None,
+            "pred_answer": extract_final_answer(response),
+        }
+    
+    gt = ref["answer"]
+    pred = extract_final_answer(response)
+    
+    # Check if this is an adversarial question
+    ADVERSARIAL_TRIGGERS = ["NOT_FOUND", "N/A", "UNKNOWN", "NO_DATA", "NOT DETERMINABLE"]
+    gt_upper = gt.upper().strip()
+    is_adversarial = any(trigger in gt_upper for trigger in ADVERSARIAL_TRIGGERS)
+    
+    # Build prediction dict for judges
+    prediction = {
+        "answer": pred,
+        "final_answer": response,
+        "duration": duration_seconds,
+        "tokens": total_tokens,
+        "logs": agent_logs or {
+            "total_cost": total_cost,
+            "turns": [],
+        }
+    }
+    
+    # Simple mode: just use heuristics + basic LLM judge
+    if not use_multi_judge:
+        is_ok, reason = heuristic_match(gt, pred)
+        method = "heuristic"
+        explanation = reason
+        correct = is_ok
+        
+        if not is_ok:
+            try:
+                rubric = ref.get("rubric", "")
+                j_ok, j_expl = call_openai_judge("gpt-4o", question, gt, pred, rubric)
+                correct = j_ok
+                method = "llm_judge"
+                explanation = j_expl or "LLM judge decision"
+            except Exception as e:
+                method = "judge_error"
+                explanation = f"LLM judge error: {e}"
+        
+        expert_time = ref.get("expert_time", 0.0)
+        eff_score = calculate_efficiency(duration_seconds, total_tokens, expert_time)
+        attr_score = check_attribution(pred, response)
+        comp_score = 0.7 * float(correct) + 0.2 * eff_score + 0.1 * attr_score
+        
+        return {
+            "correct": correct,
+            "composite_score": round(comp_score * 100, 2),
+            "pipeline": "simple",
+            "explanation": explanation,
+            "method": method,
+            "judges": {
+                "efficiency": {"score": round(eff_score * 100, 2)},
+                "attribution": {"score": round(attr_score * 100, 2)},
+            },
+            "gt_answer": gt,
+            "pred_answer": pred,
+        }
+    
+    # Full multi-judge mode
+    if not _OPENAI_OK:
+        return {
+            "correct": False,
+            "composite_score": 0.0,
+            "pipeline": "error",
+            "explanation": "OpenAI SDK not available for multi-judge",
+            "judges": {},
+            "gt_answer": gt,
+            "pred_answer": pred,
+        }
+    
+    try:
+        client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    except Exception as e:
+        return {
+            "correct": False,
+            "composite_score": 0.0,
+            "pipeline": "error",
+            "explanation": f"Failed to initialize OpenAI client: {e}",
+            "judges": {},
+            "gt_answer": gt,
+            "pred_answer": pred,
+        }
+    
+    # Initialize judges
+    judges_results = {}
+    fact_score = 0.0
+    
+    if is_adversarial:
+        # Adversarial pipeline: use RefusalJudge
+        refusal_judge = RefusalJudge(llm_client=client)
+        r_res = refusal_judge.evaluate(ref, prediction)
+        judges_results["refusal"] = r_res
+        fact_score = r_res["score"]
+        
+        # Check sources for relevance
+        source_judge = SourceJudge(llm_client=client)
+        s_res = source_judge.evaluate(ref, prediction, is_adversarial=True)
+        judges_results["source"] = s_res
+    else:
+        # Standard pipeline: use FactJudge
+        fact_judge = FactJudge(llm_client=client)
+        f_res = fact_judge.evaluate(ref, prediction)
+        judges_results["fact"] = f_res
+        fact_score = f_res["score"]
+        
+        # Check sources for validity
+        source_judge = SourceJudge(llm_client=client)
+        s_res = source_judge.evaluate(ref, prediction, is_adversarial=False)
+        judges_results["source"] = s_res
+    
+    # Efficiency judge
+    efficiency_judge = EfficiencyJudge()
+    e_res = efficiency_judge.evaluate(ref, prediction)
+    judges_results["efficiency"] = e_res
+    
+    # Calibration judge
+    calibration_judge = CalibrationJudge()
+    c_res = calibration_judge.evaluate(ref, prediction, fact_score)
+    judges_results["calibration"] = c_res
+    
+    # Calculate composite score: 50% fact, 30% source, 10% efficiency, 10% calibration
+    source_score = judges_results.get("source", {}).get("score", 0.0)
+    composite_score = (
+        0.5 * fact_score +
+        0.3 * source_score +
+        0.1 * e_res["score"] +
+        0.1 * c_res["score"]
+    )
+    
+    # Consider "correct" if composite >= 70 or fact score >= 80
+    is_correct = composite_score >= 70 or fact_score >= 80
+    
+    return {
+        "correct": is_correct,
+        "composite_score": round(composite_score, 2),
+        "pipeline": "adversarial" if is_adversarial else "standard",
+        "explanation": f"Fact: {fact_score:.0f}, Source: {source_score:.0f}, Eff: {e_res['score']:.0f}, Cal: {c_res['score']:.0f}",
+        "judges": judges_results,
+        "gt_answer": gt,
+        "pred_answer": pred,
+    }
 
 
 def load_questions_from_csv(csv_path: str = None) -> List[str]:
@@ -351,6 +591,43 @@ class FinanceAgentExecutor(AgentExecutor):
         end_time = datetime.now()
         duration_seconds = (end_time - start_time).total_seconds()
 
+        # Extract token usage and cost from metadata if available
+        total_tokens = 0
+        total_cost = 0.0
+        if isinstance(agent_metadata, dict):
+            token_info = agent_metadata.get("total_tokens", {})
+            if isinstance(token_info, dict):
+                total_tokens = token_info.get("total_tokens", 0)
+            elif isinstance(token_info, (int, float)):
+                total_tokens = int(token_info)
+            total_cost = agent_metadata.get("total_cost", 0.0)
+
+        # === JUDGE THE RESPONSE (Multi-Judge System) ===
+        use_multi_judge = config.get("use_multi_judge", True)
+        csv_path = config.get("csv_path")
+        
+        print(f"@@@ Judging response against ground truth (multi_judge={use_multi_judge})...")
+        judge_result = judge_response(
+            question=question,
+            response=final_answer,
+            duration_seconds=duration_seconds,
+            total_tokens=total_tokens,
+            total_cost=total_cost,
+            agent_logs=agent_metadata,
+            use_multi_judge=use_multi_judge,
+            csv_path=csv_path,
+        )
+        
+        is_correct = judge_result["correct"]
+        result_emoji = "✅" if is_correct else "❌"
+        pipeline = judge_result.get("pipeline", "unknown")
+        
+        print(f"@@@ Judge result: {result_emoji} Pipeline: {pipeline}")
+        print(f"@@@ Explanation: {judge_result['explanation']}")
+        if judge_result.get("gt_answer"):
+            print(f"@@@ Ground truth: {judge_result['gt_answer'][:200]}...")
+            print(f"@@@ Prediction:   {judge_result.get('pred_answer', '')[:200]}...")
+
         metrics["mode"] = mode
         metrics["time_used"] = time.time() - timestamp_started
         metrics["start_time"] = start_time.isoformat()
@@ -358,14 +635,62 @@ class FinanceAgentExecutor(AgentExecutor):
         metrics["duration_seconds"] = duration_seconds
         metrics["final_answer"] = final_answer
         metrics["agent_metadata"] = agent_metadata
-        result_bool = metrics["success"] = res.reward == 1
-        result_emoji = "✅" if result_bool else "❌"
+        metrics["total_tokens"] = total_tokens
+        metrics["total_cost"] = total_cost
+        
+        # Add judge results to metrics
+        metrics["judge"] = judge_result
+        metrics["correct"] = is_correct
+        metrics["composite_score"] = judge_result["composite_score"]
+        metrics["pipeline"] = pipeline
+        
+        result_bool = metrics["success"] = is_correct
 
         print(f"Finance agent: Evaluation complete. Duration: {duration_seconds:.2f}s")
+        
+        # Build detailed result message with multi-judge scores
+        judges = judge_result.get("judges", {})
+        
+        # Extract individual judge scores
+        fact_score = judges.get("fact", judges.get("refusal", {})).get("score", "N/A")
+        source_score = judges.get("source", {}).get("score", "N/A")
+        efficiency_score = judges.get("efficiency", {}).get("score", "N/A")
+        calibration_score = judges.get("calibration", {}).get("score", "N/A")
+        
+        result_msg = f"""
+╔══════════════════════════════════════════════════════════╗
+║                 MULTI-JUDGE EVALUATION                    ║
+╚══════════════════════════════════════════════════════════╝
+
+Result: {result_emoji} {"CORRECT" if is_correct else "INCORRECT"}
+Pipeline: {pipeline.upper()}
+Composite Score: {judge_result['composite_score']}/100
+
+Mode: {mode}
+Duration: {duration_seconds:.2f}s
+Tokens: {total_tokens}
+Cost: ${total_cost:.4f}
+
+┌─────────────────────────────────────────────────────────┐
+│ JUDGE SCORES                                            │
+├─────────────────────────────────────────────────────────┤
+│ {"Refusal" if pipeline == "adversarial" else "Fact"} Judge:       {fact_score}/100 (50% weight)
+│ Source Judge:      {source_score}/100 (30% weight)
+│ Efficiency Judge:  {efficiency_score}/100 (10% weight)
+│ Calibration Judge: {calibration_score}/100 (10% weight)
+└─────────────────────────────────────────────────────────┘
+
+Explanation: {judge_result['explanation']}
+
+Question: {question[:200]}...
+
+Agent Answer: {judge_result.get('pred_answer', final_answer)[:300]}...
+
+Ground Truth: {judge_result.get('gt_answer', 'N/A')[:300] if judge_result.get('gt_answer') else 'N/A'}...
+"""
+        
         await event_queue.enqueue_event(
-            new_agent_text_message(
-                f"Finished. Agent success: {result_emoji}\nMode: {mode}\nMetrics: {json.dumps(metrics, indent=2)}\nAnswer: {final_answer}\n"
-            )
+            new_agent_text_message(result_msg)
         )
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:

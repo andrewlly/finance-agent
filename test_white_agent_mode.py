@@ -45,7 +45,8 @@ async def test_white_agent_mode(
     print("\n✅ Both agents ready!\n")
 
     # Prepare message with white agent URL
-    question = "What is Apple's current stock price?"
+    # Use a question from data/public.csv so the judge can evaluate it
+    question = "How has US Steel addressed its planned merger with Nippon Steel and its effect on its business operations?"
 
     message = f"""<white_agent_url>
 {white_agent_url}
