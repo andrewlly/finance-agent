@@ -40,14 +40,14 @@ The FY2024 revenue was $5.2 billion, an increase of 10% YoY.
 
 CONFIDENCE: 95
 
-{
+{{
     "sources": [
-        {
+        {{
             "url": "https://sec.gov/...",
             "name": "2024 10-K Filing"
-        }
+        }}
     ]
-}
+}}
 
 Question:
 {question}
